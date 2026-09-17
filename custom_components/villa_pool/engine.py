@@ -312,6 +312,8 @@ class SupervisorEngine:
             grid_heating=state.grid_heating,
             in_grid_window=in_window(state.now, w.pdc_grid_start, w.pdc_grid_end),
             solar_ok=False,
+            outdoor_temp=state.outdoor_temp,
+            antifreeze_off_c=state.config.antifreeze_off_c,
         )
 
     # --- reporting -----------------------------------------------------------

@@ -7,10 +7,11 @@ chlorinator state, and coordinates the three as one hydraulic system:
 filtration windows, a guaranteed minimum water temperature, solar-first
 heating, chlorination to a daily target, and winter antifreeze.
 
-> **Status: v0.3.0 — the pump, the chlorinator and the heat pump are all
-> driven.** `switch.pool_dry_run` is **ON by default** and is what gates every
-> write, so a fresh install still only decides, reports and logs. Turning it
-> off is the owner's deliberate act and is announced in the log.
+> **Status: v0.4.0 — winter mode and antifreeze are live, on top of the pump,
+> the chlorinator and the heat pump.** `switch.pool_dry_run` is **ON by
+> default** and is what gates every write, so a fresh install still only
+> decides, reports and logs. Turning it off is the owner's deliberate act and
+> is announced in the log.
 
 Target: Home Assistant **2026.8.3** (Python ≥ 3.14). Single instance,
 config-flow. Full engineering context lives in [`CLAUDE.md`](./CLAUDE.md); the
@@ -49,6 +50,14 @@ September night offline gives five commands in eight hours for two heating
 runs, and a night of flickering `unavailable` produces exactly the same five,
 at the same minutes.
 
+Winter has its own shape: the summer pump window is replaced by a slot from
+12:00 for `winter_hours` at 80 % with the cell enabled, and the heat pump is
+blocked. **Antifreeze is orthogonal and wins** — below `antifreeze_on_c` the
+pump runs continuously at `antifreeze_speed` with the chlorinator off, releasing
+at `antifreeze_off_c`, and it keeps running in `manual` and `closed` too
+(owner amendment 2026-09-17: `closed` is the mode the pool spends the winter in,
+unattended). `maintenance` still freezes everything — someone is at the pool.
+
 ## Installation (HACS)
 
 1. HACS → ⋮ → **Custom repositories** → add `https://github.com/matponta/villa-pool`,
@@ -80,7 +89,9 @@ is where it is — read this first) · `sensor.pool_pdc_state` with `reason` /
 `since` / `last_stop` · `sensor.pool_cop_stimato` and
 `sensor.pool_costo_termico_stimato` (estimates only) ·
 `sensor.pool_chlorine_hours_missing` · `sensor.pool_volume_today` (with
-turnovers) · `sensor.pool_cover_closed_for` · `binary_sensor.pool_solar_ok`.
+turnovers) · `sensor.pool_cover_closed_for` · `binary_sensor.pool_solar_ok` ·
+`binary_sensor.pool_antifreeze` (the freeze latch, with the thresholds and the
+mode it is overriding).
 
 `sensor.pool_supervisor_reason` also carries `writes`, `last_write`, `latched`
 (levers the supervisor has stopped driving because something else kept moving
@@ -103,7 +114,7 @@ Measured live; do not re-derive them (see `CLAUDE.md`):
 
 ## Tests
 
-190 tests, all pure-fast except the end-to-end ones, which run against the exact
+229 tests, all pure-fast except the end-to-end ones, which run against the exact
 deploy-target HA.
 
 ```bash

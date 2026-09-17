@@ -22,7 +22,9 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.villa_pool.actuator import PDC_ACTUATION_IMPLEMENTED
 from custom_components.villa_pool.const import (
+    DEFAULT_ANTIFREEZE_SPEED,
     DEFAULT_CHLORINATOR_SWITCH,
+    DEFAULT_FILTRATION_SPEED,
     DEFAULT_MIN_TEMP,
     DEFAULT_PDC_CLIMATE,
     DEFAULT_PUMP_RUNNING,
@@ -31,6 +33,9 @@ from custom_components.villa_pool.const import (
     DEFAULT_TARIFF_BAND,
     DEFAULT_WATER_TEMP,
     DOMAIN,
+    MODE_CLOSED,
+    MODE_MANUAL,
+    MODE_WINTER,
     PDC_BLOCKED,
     PDC_GRID,
     PDC_SOLAR,
@@ -161,6 +166,16 @@ def writes(calls, domain: str | None = None, service: str | None = None) -> list
             continue
         out.append(call)
     return out
+
+
+def pushes(calls, tag: str) -> list:
+    """Captured `notify` calls carrying one tag.
+
+    The supervisor has several notification sources (hardware blocks, latched
+    levers, antifreeze), so a bare count of pushes tells you nothing about
+    which fired.
+    """
+    return [c for c in calls if (c.data.get("data") or {}).get("tag") == tag]
 
 
 def entities_of(calls) -> list[str]:
@@ -790,6 +805,210 @@ async def test_the_writes_are_visible_on_the_reason_sensor(
     assert attrs["dry_run"] is False
     assert attrs["writes"] >= 1
     assert attrs["last_write"]
+
+
+# --- v0.4.0: winter and antifreeze -------------------------------------------
+
+async def set_mode(hass: HomeAssistant, mode: str) -> None:
+    await hass.services.async_call(
+        "select", "select_option",
+        {"entity_id": "select.pool_mode", "option": mode}, blocking=True,
+    )
+    await hass.async_block_till_done()
+
+
+async def test_the_antifreeze_sensor_exists(hass: HomeAssistant) -> None:
+    """A new entity id, so it is a contract from here on."""
+    await setup_pool(hass)
+    assert hass.states.get("binary_sensor.pool_antifreeze") is not None
+
+
+async def test_the_winter_noon_slot_drives_the_pump(hass: HomeAssistant) -> None:
+    """§3: winter runs the pump from 12:00 for `winter_hours` at 80 %."""
+    with freeze_time("2026-12-15 12:30:00+01:00") as frozen:
+        await setup_pool(hass, **{
+            DEFAULT_PUMP_SWITCH: "off",
+            "sensor.gw3000a_outdoor_temperature": "5.0",
+            DEFAULT_WATER_TEMP: "8.0",
+        })
+        calls = record_calls(hass)
+        await set_mode(hass, MODE_WINTER)
+        await go_live(hass)
+        await tick(hass, times=2, freezer=frozen)
+    assert DEFAULT_PUMP_SWITCH in entities_of(writes(calls, "switch", "turn_on"))
+    speeds = [c["service_data"]["value"] for c in writes(calls, "number", "set_value")]
+    assert speeds == [] or speeds[0] == float(DEFAULT_FILTRATION_SPEED)
+
+
+async def test_winter_stops_the_heat_pump(hass: HomeAssistant) -> None:
+    """§5.2: winter is in `PDC_BLOCKED_MODES`, and from v0.3.0 that is a real
+    `off` command rather than only a state."""
+    with freeze_time("2026-12-15 12:30:00+01:00") as frozen:
+        await setup_pool(hass, pdc_temperature=DEFAULT_MIN_TEMP, **{
+            "sensor.gw3000a_outdoor_temperature": "5.0",
+            DEFAULT_WATER_TEMP: "8.0",
+            DEFAULT_PDC_CLIMATE: "heat",
+        })
+        mock_climate(hass)
+        calls = record_calls(hass)
+        await set_mode(hass, MODE_WINTER)
+        await go_live(hass)
+        await tick(hass, times=2, freezer=frozen)
+        assert hass.states.get("sensor.pool_pdc_state").state == PDC_BLOCKED
+    modes = [c["service_data"]["hvac_mode"]
+             for c in writes(calls, "climate", "set_hvac_mode")]
+    assert modes == ["off"]
+
+
+async def test_antifreeze_cuts_the_cell_before_it_slows_the_pump(
+    hass: HomeAssistant,
+) -> None:
+    """§6 in the antifreeze path: the cell's flow-switch minimum is unknown, so
+    30 % must wait until `switch.clorinatore` genuinely reads off — not merely
+    until it has been told to."""
+    with freeze_time("2026-12-15 03:00:00+01:00") as frozen:
+        await setup_pool(hass, **{
+            "sensor.gw3000a_outdoor_temperature": "-1.0",
+            DEFAULT_WATER_TEMP: "8.0",
+            DEFAULT_CHLORINATOR_SWITCH: "on",
+            "number.pompa_piscina_manual_percentage_power": "80",
+        })
+        calls = record_calls(hass)
+        await set_mode(hass, MODE_WINTER)
+        await go_live(hass)
+        await tick(hass, times=2, freezer=frozen)
+        assert DEFAULT_CHLORINATOR_SWITCH in entities_of(
+            writes(calls, "switch", "turn_off")
+        )
+        assert writes(calls, "number", "set_value") == []
+        # The relay opens, and only then does the pump slow down.
+        hass.states.async_set(DEFAULT_CHLORINATOR_SWITCH, "off")
+        await tick(hass, times=2, freezer=frozen)
+    sent = writes(calls, "number", "set_value")
+    assert sent
+    assert sent[0]["service_data"]["value"] == float(DEFAULT_ANTIFREEZE_SPEED)
+
+
+@pytest.mark.parametrize("mode", [MODE_MANUAL, MODE_CLOSED])
+async def test_antifreeze_drives_the_pump_even_in_a_frozen_mode(
+    hass: HomeAssistant, mode: str
+) -> None:
+    """Owner amendment 2026-09-17. `closed` is the mode the pool spends the
+    whole winter in, unattended — which is exactly when the pipes are at
+    risk."""
+    with freeze_time("2026-12-15 03:00:00+01:00") as frozen:
+        await setup_pool(hass, **{
+            "sensor.gw3000a_outdoor_temperature": "-1.0",
+            DEFAULT_WATER_TEMP: "8.0",
+            DEFAULT_PUMP_SWITCH: "off",
+        })
+        calls = record_calls(hass)
+        await set_mode(hass, mode)
+        await go_live(hass)
+        await tick(hass, times=2, freezer=frozen)
+    assert DEFAULT_PUMP_SWITCH in entities_of(writes(calls, "switch", "turn_on"))
+    assert hass.states.get("binary_sensor.pool_antifreeze").state == "on"
+
+
+@pytest.mark.parametrize("mode", [MODE_MANUAL, MODE_CLOSED])
+async def test_a_frozen_mode_on_a_mild_night_still_drives_nothing(
+    hass: HomeAssistant, mode: str
+) -> None:
+    """The override is antifreeze, not a general licence to actuate."""
+    with freeze_time("2026-12-15 03:00:00+01:00") as frozen:
+        await setup_pool(hass, **{
+            "sensor.gw3000a_outdoor_temperature": "12.0",
+            DEFAULT_WATER_TEMP: "8.0",
+            DEFAULT_PUMP_SWITCH: "off",
+            DEFAULT_CHLORINATOR_SWITCH: "on",
+        })
+        calls = record_calls(hass)
+        await set_mode(hass, mode)
+        await go_live(hass)
+        await tick(hass, times=3, freezer=frozen)
+    assert writes(calls) == []
+
+
+async def test_maintenance_still_freezes_through_a_freeze(
+    hass: HomeAssistant,
+) -> None:
+    """The one case the amendment deliberately left alone: someone is at the
+    pool, possibly with it drained."""
+    with freeze_time("2026-12-15 03:00:00+01:00") as frozen:
+        await setup_pool(hass, **{
+            "sensor.gw3000a_outdoor_temperature": "-1.0",
+            DEFAULT_WATER_TEMP: "8.0",
+            DEFAULT_PUMP_SWITCH: "off",
+        })
+        await go_live(hass)
+        await hass.services.async_call(
+            "switch", "turn_on",
+            {"entity_id": "switch.pool_maintenance"}, blocking=True,
+        )
+        calls = record_calls(hass)
+        await tick(hass, times=3, freezer=frozen)
+    assert writes(calls) == []
+    # Engaged, and deliberately ignored — the sensor must still say so.
+    assert hass.states.get("binary_sensor.pool_antifreeze").state == "on"
+
+
+async def test_antifreeze_notifies_on_both_edges(hass: HomeAssistant) -> None:
+    calls = async_mock_service(hass, "notify", "mobile_app_matphone16")
+    with freeze_time("2026-12-15 03:00:00+01:00") as frozen:
+        await setup_pool(hass, **{
+            "sensor.gw3000a_outdoor_temperature": "12.0",
+            DEFAULT_WATER_TEMP: "8.0",
+        })
+        await set_mode(hass, MODE_WINTER)
+        await go_live(hass)
+        await tick(hass, times=2, freezer=frozen)
+        assert pushes(calls, "pool_antifreeze") == []   # a mild night is no event
+        hass.states.async_set("sensor.gw3000a_outdoor_temperature", "-1.0")
+        await tick(hass, times=2, freezer=frozen)
+        sent = pushes(calls, "pool_antifreeze")
+        assert len(sent) == 1
+        assert "antifreeze engaged" in sent[0].data["title"].lower()
+        hass.states.async_set("sensor.gw3000a_outdoor_temperature", "3.0")
+        await tick(hass, times=2, freezer=frozen)
+    sent = pushes(calls, "pool_antifreeze")
+    assert len(sent) == 2
+    assert "released" in sent[1].data["title"].lower()
+
+
+async def test_antifreeze_does_not_notify_once_per_tick(
+    hass: HomeAssistant,
+) -> None:
+    """Edge-triggered, like the fault blocks. A freeze lasts days."""
+    calls = async_mock_service(hass, "notify", "mobile_app_matphone16")
+    with freeze_time("2026-12-15 03:00:00+01:00") as frozen:
+        await setup_pool(hass, **{
+            "sensor.gw3000a_outdoor_temperature": "-5.0",
+            DEFAULT_WATER_TEMP: "8.0",
+        })
+        await set_mode(hass, MODE_WINTER)
+        await go_live(hass)
+        await tick(hass, times=30, freezer=frozen)
+    assert len(pushes(calls, "pool_antifreeze")) == 1
+
+
+async def test_a_restart_inside_the_hysteresis_band_keeps_protecting(
+    hass: HomeAssistant,
+) -> None:
+    """The latch is history a fresh start does not have. At +1 °C, inside the
+    0..+2 band, re-deriving from the ENGAGE threshold would stop the pump in
+    the middle of a cold snap."""
+    with freeze_time("2026-12-15 03:00:00+01:00") as frozen:
+        await setup_pool(hass, **{
+            "sensor.gw3000a_outdoor_temperature": "1.0",
+            DEFAULT_WATER_TEMP: "8.0",
+            DEFAULT_PUMP_SWITCH: "off",
+        })
+        calls = record_calls(hass)
+        await set_mode(hass, MODE_WINTER)
+        await go_live(hass)
+        await tick(hass, times=2, freezer=frozen)
+    assert hass.states.get("binary_sensor.pool_antifreeze").state == "on"
+    assert DEFAULT_PUMP_SWITCH in entities_of(writes(calls, "switch", "turn_on"))
 
 
 # --- the reason surface ------------------------------------------------------

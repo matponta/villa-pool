@@ -104,6 +104,7 @@ class Actuator:
         self._latched: set[str] = set()
         self._last_dry: tuple | None = None
         self._last_block: str | None = None
+        self._last_antifreeze: bool | None = None
         self._deferred: set[str] = set()
         self.writes = 0
         self.last_write: str | None = None
@@ -289,6 +290,7 @@ class Actuator:
             return
 
         await self._notify_block(decision)
+        await self._notify_antifreeze(decision)
         for target in targets:
             await self._apply_one(target, decision, mono)
 
@@ -415,6 +417,34 @@ class Actuator:
             f"{block}. {decision.reason}",
             tag=f"pool_blocked_{block.replace(' ', '_')}",
         )
+
+    async def _notify_antifreeze(self, decision: Decision) -> None:
+        """Both edges of the freeze latch (owner decision, 2026-09-17).
+
+        Rare, actionable and worth knowing about at 03:00: the pool has started
+        protecting itself, and the owner may want to check the cover, the
+        skimmer or the pipework while it does. The release is sent too, so the
+        event has a visible end rather than trailing off.
+        """
+        active = bool(decision.detail.get("antifreeze"))
+        if active == self._last_antifreeze:
+            return
+        first_look, self._last_antifreeze = self._last_antifreeze is None, active
+        if first_look and not active:
+            # Starting up on a mild day is not an event.
+            return
+        if active:
+            await self._send_notification(
+                "Pool: antifreeze engaged",
+                f"Freeze protection is running. {decision.reason}",
+                tag="pool_antifreeze",
+            )
+        else:
+            await self._send_notification(
+                "Pool: antifreeze released",
+                f"The air is back above the release threshold. {decision.reason}",
+                tag="pool_antifreeze",
+            )
 
     async def _send_notification(self, title: str, message: str, *, tag: str) -> None:
         merged = {**self.entry.data, **self.entry.options}
