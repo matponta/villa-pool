@@ -7,11 +7,10 @@ chlorinator state, and coordinates the three as one hydraulic system:
 filtration windows, a guaranteed minimum water temperature, solar-first
 heating, chlorination to a daily target, and winter antifreeze.
 
-> **Status: v0.2.0 — the pump and the chlorinator are driven; the PdC is not.**
-> `switch.pool_dry_run` is **ON by default** and is what gates every write, so a
-> fresh install still only decides, reports and logs. Turning it off is the
-> owner's deliberate act and is announced in the log. The heat pump is still
-> untouched — that is v0.3.0.
+> **Status: v0.3.0 — the pump, the chlorinator and the heat pump are all
+> driven.** `switch.pool_dry_run` is **ON by default** and is what gates every
+> write, so a fresh install still only decides, reports and logs. Turning it
+> off is the owner's deliberate act and is announced in the log.
 
 Target: Home Assistant **2026.8.3** (Python ≥ 3.14). Single instance,
 config-flow. Full engineering context lives in [`CLAUDE.md`](./CLAUDE.md); the
@@ -40,6 +39,16 @@ hydraulic, not cosmetic: flow is never taken away before the things drawing
 through it, so the chlorinator is cut before the pump, and the pump is held on
 while the heat pump still reads as running.
 
+The heat pump gets two extra protections, because it is the only lever that can
+be damaged by being asked twice. Its entities are cloud-polled and flicker
+`unavailable` between polls, and that is treated as *no information*: no state
+change and no command. A repeat of the same `hvac_mode` is rate-limited to once
+per compressor grace (15 min, STORY §6), while a *change* of mind is never
+rate-limited — so a pump fault still stops it within one tick. Replaying a
+September night offline gives five commands in eight hours for two heating
+runs, and a night of flickering `unavailable` produces exactly the same five,
+at the same minutes.
+
 ## Installation (HACS)
 
 1. HACS → ⋮ → **Custom repositories** → add `https://github.com/matponta/villa-pool`,
@@ -50,9 +59,10 @@ while the heat pump still reads as running.
    leave **Cover closed** empty until that sensor exists.
 5. Assign the *Pool* device to the **pool** area.
 6. Leave `switch.pool_dry_run` **on** for 24 h and compare the log with what
-   the pool actually did. Only then turn it off — and retire the two
-   chlorinator automations first (see `NEXT_SESSION.md`), or they and the
-   supervisor will take turns switching the cell.
+   the pool actually did. Only then turn it off — and first retire the two
+   chlorinator automations and confirm `automation.pool_test_cop_notturno` is
+   disabled (see `NEXT_SESSION.md`), or they and the supervisor will take turns
+   on the same relays.
 
 ## What it exposes
 
@@ -72,9 +82,10 @@ is where it is — read this first) · `sensor.pool_pdc_state` with `reason` /
 `sensor.pool_chlorine_hours_missing` · `sensor.pool_volume_today` (with
 turnovers) · `sensor.pool_cover_closed_for` · `binary_sensor.pool_solar_ok`.
 
-`sensor.pool_supervisor_reason` also carries `writes`, `last_write` and
-`latched` — the levers the supervisor has stopped driving because something
-else kept moving them back. If the pool is not following, read `latched` first.
+`sensor.pool_supervisor_reason` also carries `writes`, `last_write`, `latched`
+(levers the supervisor has stopped driving because something else kept moving
+them back) and `holding` (levers it wants to move but is holding back for a
+hydraulic reason). If the pool is not following, read those two first.
 
 ## Key verified facts
 
@@ -92,7 +103,7 @@ Measured live; do not re-derive them (see `CLAUDE.md`):
 
 ## Tests
 
-182 tests, all pure-fast except the end-to-end ones, which run against the exact
+190 tests, all pure-fast except the end-to-end ones, which run against the exact
 deploy-target HA.
 
 ```bash

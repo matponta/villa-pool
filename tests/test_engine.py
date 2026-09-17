@@ -23,14 +23,17 @@ from pytest_homeassistant_custom_component.common import (
 from custom_components.villa_pool.actuator import PDC_ACTUATION_IMPLEMENTED
 from custom_components.villa_pool.const import (
     DEFAULT_CHLORINATOR_SWITCH,
+    DEFAULT_MIN_TEMP,
     DEFAULT_PDC_CLIMATE,
     DEFAULT_PUMP_RUNNING,
     DEFAULT_PUMP_SWITCH,
+    DEFAULT_SOLAR_TARGET_TEMP,
     DEFAULT_TARIFF_BAND,
     DEFAULT_WATER_TEMP,
     DOMAIN,
     PDC_BLOCKED,
     PDC_GRID,
+    PDC_SOLAR,
 )
 from custom_components.villa_pool.engine import ACTUATION_IMPLEMENTED
 
@@ -39,8 +42,17 @@ from .conftest import ENTRY_DATA
 TICK = timedelta(seconds=60)
 
 
-async def setup_pool(hass: HomeAssistant, **states) -> MockConfigEntry:
-    """Seed the input entities, then load the integration."""
+async def setup_pool(
+    hass: HomeAssistant, *, pdc_temperature: float | None = 29.0, **states
+) -> MockConfigEntry:
+    """Seed the input entities, then load the integration.
+
+    `pdc_temperature` is the climate entity's `temperature` attribute — the
+    machine's own target, which the aquatemp fork reports whether it is heating
+    or not. 29.0 is what the owner's manual runs of 16/9 left it on. `None`
+    models a climate that reports no target at all, which the supervisor must
+    treat as "unknown" rather than argue with.
+    """
     defaults = {
         DEFAULT_PUMP_RUNNING: "on",
         DEFAULT_PUMP_SWITCH: "on",
@@ -69,6 +81,12 @@ async def setup_pool(hass: HomeAssistant, **states) -> MockConfigEntry:
     defaults.update(states)
     for entity_id, state in defaults.items():
         hass.states.async_set(entity_id, state)
+    if pdc_temperature is not None:
+        hass.states.async_set(
+            DEFAULT_PDC_CLIMATE,
+            defaults[DEFAULT_PDC_CLIMATE],
+            {"temperature": pdc_temperature},
+        )
 
     entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA, unique_id=DOMAIN)
     entry.add_to_hass(hass)
@@ -257,14 +275,11 @@ async def test_going_live_is_announced_loudly(
     assert "now WRITING to the pool" in caplog.text
 
 
-# --- v0.2.0: the pump and the chlorinator ------------------------------------
+# --- the pump and the chlorinator (v0.2.0) -----------------------------------
 
-async def test_v0_2_0_wires_the_pump_and_the_chlorinator_only(
-    hass: HomeAssistant,
-) -> None:
-    """STORY §8 step 2 is explicitly "pump and chlorinator, leaving the PdC
-    untouched". The PdC lands in step 3."""
-    assert PDC_ACTUATION_IMPLEMENTED is False
+async def test_the_pdc_levers_are_wired(hass: HomeAssistant) -> None:
+    """STORY §8 step 3. They were deliberately absent in v0.2.0."""
+    assert PDC_ACTUATION_IMPLEMENTED is True
 
 
 async def test_live_turns_the_pump_on(hass: HomeAssistant) -> None:
@@ -448,6 +463,11 @@ async def test_the_pump_is_not_stopped_under_a_running_pdc(
         writes(calls, "switch", "turn_off")
     )
     assert "Holding off on the pump" in caplog.text
+    # And the hold is visible, not merely safe: the guard never times out, so a
+    # stuck `pool_pdc_acceso` would otherwise keep the pump running for ever
+    # with nothing on the dashboard to say why.
+    attrs = hass.states.get("sensor.pool_supervisor_reason").attributes
+    assert "pump" in attrs["holding"]
 
 
 async def test_the_pump_stops_once_the_pdc_has_wound_down(
@@ -557,20 +577,207 @@ async def test_a_routine_block_does_not_notify(hass: HomeAssistant) -> None:
     assert calls == []
 
 
-async def test_v0_2_0_never_touches_the_pdc(hass: HomeAssistant) -> None:
-    """Step 2 leaves the heat pump alone even when the law clearly wants it."""
+# --- v0.3.0: the heat pump ---------------------------------------------------
+
+def mock_climate(hass: HomeAssistant) -> None:
+    """Register the climate services.
+
+    The `climate` component is not loaded in these tests (this integration
+    forwards no climate platform), so without this the calls would raise
+    `ServiceNotFound` and never reach the bus — a test that then asserted "no
+    climate call" would be proving nothing.
+    """
+    async_mock_service(hass, "climate", "set_hvac_mode")
+    async_mock_service(hass, "climate", "set_temperature")
+
+
+async def grid_night(hass: HomeAssistant, frozen, *, pdc_temperature=29.0, **states):
+    """A cold September night inside the grid window, live."""
+    await setup_pool(hass, pdc_temperature=pdc_temperature, **{
+        DEFAULT_WATER_TEMP: "25.6",
+        DEFAULT_TARIFF_BAND: "F3",
+        **states,
+    })
+    mock_climate(hass)
+    calls = record_calls(hass)
+    await go_live(hass)
+    await tick(hass, times=3, freezer=frozen)
+    return calls
+
+
+async def test_grid_writes_the_setpoint_and_then_heat(hass: HomeAssistant) -> None:
+    """§5.2: HA writes only `hvac_mode` and the setpoint — and the setpoint
+    first, so the machine never starts against whatever ran last."""
+    with freeze_time("2026-09-16 23:00:00+02:00") as frozen:
+        calls = await grid_night(hass, frozen)
+        assert hass.states.get("sensor.pool_pdc_state").state == PDC_GRID
+    climate = writes(calls, "climate")
+    services = [c["service"] for c in climate]
+    assert services == ["set_temperature", "set_hvac_mode"]
+    assert climate[0]["service_data"]["temperature"] == DEFAULT_MIN_TEMP
+    assert climate[1]["service_data"]["hvac_mode"] == "heat"
+
+
+async def test_the_solar_setpoint_is_the_solar_target(hass: HomeAssistant) -> None:
+    with freeze_time("2026-09-16 12:00:00+02:00") as frozen:
+        await setup_pool(hass, **{
+            DEFAULT_WATER_TEMP: "26.0",
+            "sensor.solar_headroom_for_heater": "4000",
+        })
+        mock_climate(hass)
+        calls = record_calls(hass)
+        await go_live(hass)
+        await tick(hass, times=13, freezer=frozen)   # past the 10 min dwell
+        assert hass.states.get("sensor.pool_pdc_state").state == PDC_SOLAR
+    temps = writes(calls, "climate", "set_temperature")
+    assert temps
+    assert temps[0]["service_data"]["temperature"] == DEFAULT_SOLAR_TARGET_TEMP
+
+
+async def test_reaching_the_target_writes_hvac_mode_off(hass: HomeAssistant) -> None:
+    with freeze_time("2026-09-16 23:00:00+02:00") as frozen:
+        calls = await grid_night(
+            hass, frozen, pdc_temperature=DEFAULT_MIN_TEMP,
+            **{DEFAULT_PDC_CLIMATE: "heat"},
+        )
+        # An hour of heating later the water is past min_temp + 0.5.
+        frozen.tick(timedelta(hours=1))
+        hass.states.async_set(DEFAULT_WATER_TEMP, "27.6")
+        await tick(hass, times=2, freezer=frozen)
+    modes = [c["service_data"]["hvac_mode"]
+             for c in writes(calls, "climate", "set_hvac_mode")]
+    assert modes[-1] == "off"
+
+
+async def test_a_pump_fault_stops_the_pdc_within_one_tick(
+    hass: HomeAssistant,
+) -> None:
+    """§7.5, now as a real command. The settle window rate-limits a REPEAT of a
+    command, never a change of mind — so the safety write is not delayed by the
+    15 min compressor grace that had just started."""
+    with freeze_time("2026-09-16 23:00:00+02:00") as frozen:
+        # The machine is already heating on the right target, so nothing has
+        # been sent — and the 15 min grace is running from a command we cannot
+        # see. The safety write must ignore it.
+        calls = await grid_night(hass, frozen, **{
+            DEFAULT_PDC_CLIMATE: "heat",
+            "binary_sensor.pool_pdc_acceso": "on",
+        })
+        assert hass.states.get("sensor.pool_pdc_state").state == PDC_GRID
+        hass.states.async_set("binary_sensor.pompa_piscina_problem", "on")
+        await tick(hass, freezer=frozen)
+        assert hass.states.get("sensor.pool_pdc_state").state == PDC_BLOCKED
+    modes = [c["service_data"]["hvac_mode"]
+             for c in writes(calls, "climate", "set_hvac_mode")]
+    assert modes == ["off"]
+
+
+async def test_no_climate_write_during_a_polling_gap(hass: HomeAssistant) -> None:
+    """§7.9. The rule that stops a machine which never stopped being started
+    twice — and the one the whole dry run was told to watch."""
     with freeze_time("2026-09-16 23:00:00+02:00") as frozen:
         await setup_pool(hass, **{
             DEFAULT_WATER_TEMP: "25.6",
             DEFAULT_TARIFF_BAND: "F3",
+            DEFAULT_PDC_CLIMATE: "unavailable",
         })
-        async_mock_service(hass, "climate", "set_hvac_mode")
-        async_mock_service(hass, "climate", "set_temperature")
+        mock_climate(hass)
         calls = record_calls(hass)
         await go_live(hass)
-        await tick(hass, times=5, freezer=frozen)
+        await tick(hass, times=6, freezer=frozen)
+    assert writes(calls, "climate") == []
+
+
+async def test_hvac_mode_is_not_re_commanded_inside_the_compressor_grace(
+    hass: HomeAssistant,
+) -> None:
+    """§6: "never write `hvac_mode` more than once per MIN_ON/MIN_OFF window".
+
+    The mocked service changes no state, so the machine never appears to adopt
+    the command — the worst case, and it must still be two writes in an hour,
+    not sixty.
+    """
+    with freeze_time("2026-09-16 23:00:00+02:00") as frozen:
+        calls = await grid_night(hass, frozen)
+        await tick(hass, times=60, freezer=frozen)
+    assert len(writes(calls, "climate", "set_hvac_mode")) == 2
+
+
+async def test_a_restart_mid_grid_does_not_re_command_the_machine(
+    hass: HomeAssistant,
+) -> None:
+    """§7.10: "never a spurious extra start". The machine is already in `heat`
+    at the right target, so the re-derived GRID state sends nothing at all."""
+    with freeze_time("2026-09-17 01:00:00+02:00") as frozen:
+        await setup_pool(hass, pdc_temperature=DEFAULT_MIN_TEMP, **{
+            DEFAULT_WATER_TEMP: "26.0",
+            DEFAULT_TARIFF_BAND: "F3",
+            "binary_sensor.pool_pdc_acceso": "on",
+            DEFAULT_PDC_CLIMATE: "heat",
+        })
+        mock_climate(hass)
+        calls = record_calls(hass)
+        await go_live(hass)
+        await tick(hass, times=3, freezer=frozen)
         assert hass.states.get("sensor.pool_pdc_state").state == PDC_GRID
     assert writes(calls, "climate") == []
+
+
+async def test_an_unreadable_setpoint_is_not_written_blind(
+    hass: HomeAssistant,
+) -> None:
+    """A climate entity that reports no `temperature` while off tells us
+    nothing about its target, so we do not argue with it. The mode still goes
+    out, and the setpoint follows once the attribute appears."""
+    with freeze_time("2026-09-16 23:00:00+02:00") as frozen:
+        calls = await grid_night(hass, frozen, pdc_temperature=None)
+        assert writes(calls, "climate", "set_temperature") == []
+        hass.states.async_set(DEFAULT_PDC_CLIMATE, "heat", {"temperature": 29.0})
+        await tick(hass, times=2, freezer=frozen)
+    temps = writes(calls, "climate", "set_temperature")
+    assert temps
+    assert temps[0]["service_data"]["temperature"] == DEFAULT_MIN_TEMP
+
+
+async def test_the_pdc_is_stopped_before_the_pump(hass: HomeAssistant) -> None:
+    """Stop order, §5.1: `PdC OFF -> post-run -> chlorine OFF -> pump OFF`.
+
+    Within one tick the only part that can be got wrong is asking the pump to
+    stop before the heat pump, and that is the part that costs a compressor.
+    """
+    recorded: list[str] = []
+
+    @callback
+    def _seen(event) -> None:
+        data = event.data
+        if data["domain"] == "climate" and data["service"] == "set_hvac_mode":
+            recorded.append("pdc")
+        if data["domain"] == "switch" and data["service"] == "turn_off":
+            if DEFAULT_PUMP_SWITCH in _entities(data):
+                recorded.append("pump")
+
+    with freeze_time("2026-09-16 23:00:00+02:00") as frozen:
+        await setup_pool(hass, **{
+            DEFAULT_WATER_TEMP: "25.6",
+            DEFAULT_TARIFF_BAND: "F3",
+            "sensor.salt_chlorinator_runtime_today": "8",
+            DEFAULT_PDC_CLIMATE: "heat",
+        })
+        mock_climate(hass)
+        hass.bus.async_listen(EVENT_CALL_SERVICE, _seen)
+        await go_live(hass)
+        await tick(hass, times=3, freezer=frozen)
+        # Grid heating is switched off: the PdC must stop, and only then may
+        # the pump follow.
+        await hass.services.async_call(
+            "switch", "turn_off",
+            {"entity_id": "switch.pool_grid_heating"}, blocking=True,
+        )
+        hass.states.async_set("binary_sensor.pool_pdc_acceso", "off")
+        await tick(hass, times=12, freezer=frozen)
+    assert "pdc" in recorded
+    assert "pump" in recorded
+    assert recorded.index("pdc") < recorded.index("pump")
 
 
 async def test_the_writes_are_visible_on_the_reason_sensor(

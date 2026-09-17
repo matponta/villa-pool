@@ -1,5 +1,96 @@
 # Next session — kickstart prompts
 
+## v0.3.0 — the PdC state machine actuates (2026-09-17) — NOT YET DEPLOYED
+
+STORY §8 step 3. The law is again unchanged; `PDC_ACTUATION_IMPLEMENTED` flips
+to True and the climate levers are built. HA writes only `climate.set_hvac_mode`
+(`heat`/`off`) and `climate.set_temperature` — the machine's own thermostat does
+the rest (§5.2). `switch.pool_dry_run` still gates everything and is still ON by
+default. **190 tests.**
+
+**The setpoint goes out before `heat`**, so the machine never starts against
+whatever target ran last (the owner's manual runs left it on 29). If the climate
+entity reports no `temperature` attribute the setpoint is not written blind —
+the mode still goes out and the setpoint follows on the tick after the attribute
+appears.
+
+**Three graces, and the difference between them matters.** A *repeat* of the
+same `hvac_mode` is rate-limited to once per 15 min (= MIN_OFF; STORY §6's
+"never write `hvac_mode` more than once per MIN_ON/MIN_OFF window"). The
+setpoint gets 10 min — the bottom of §5.2's range and two cloud polls — because
+it cycles nothing. A *change* of mind is never rate-limited at all, which is
+what lets §7.5's "PdC `off` within one tick" hold even when the compressor grace
+has just started.
+
+### Pre-tag adversarial review — one real defect, and a replay
+
+1. **The setpoint lever kept its state across a run.** `_pdc_targets` returned
+   only the mode lever when the machine was not heating, so the setpoint lever
+   was never cleared and carried its `writes` count from the last run into the
+   next one. A lever left holding `writes=2` from yesterday evening latches
+   itself on the *first* disagreement tonight — no re-assert, no second chance,
+   and the machine silently left on the wrong target for the night. Both levers
+   are now always built, the setpoint one with no opinion when it has none.
+
+2. **Replayed a September night offline through the law *and* the planner** —
+   the technique that caught the v0.1.0 short-cycle, and the one to re-run
+   before any change to the machine or the write planner. 23:00→07:00 from
+   25.6 °C gives **2 compressor starts and 5 commands** (heat, setpoint, off,
+   heat, off). Then the same night with the PdC flickering `unavailable` for one
+   minute in five plus a four-minute outage: **the same 5 commands, at the same
+   minutes.** Zero extra. That is the release's central claim and it is now
+   measured rather than argued. A partly-cloudy day gives 2 `hvac_mode`
+   commands, 2 chlorine commands, 0 pump commands and 0 speed commands.
+
+Also checked and found correct: `blocked` and `off` both resolve to one `off`
+command (the difference between them is a reason, not an instruction); a fault
+block notifies once, on the edge; the climate levers are not even constructed
+during a polling gap, so the lever memories cannot drift inside one; a restart
+against a machine already heating on the right target sends nothing at all
+(§7.10's "never a spurious extra start", now as a command rather than a state).
+
+### The behaviour change the owner should expect
+
+**In `auto` mode the supervisor now owns the heat pump.** Starting it by hand
+will be undone: commanded off, re-asserted 15 min later, and then the lever
+latches and it is left alone with a notification. The escape hatches are
+`select.pool_mode = manual` and `switch.pool_maintenance` — not winning the
+argument. This is new, and it is the thing most likely to feel wrong on the
+first evening.
+
+### What to watch on the first live night
+
+1. **`grep set_hvac_mode`** — two per heating run, no more. A third inside 15
+   minutes means the grace regressed.
+2. **`sensor.pool_pdc_state` across a polling gap.** `write_allowed` goes false
+   while the climate entity is `unavailable`; the state must not move, and no
+   command may appear in that window.
+3. **The setpoint the machine actually ends up on** — 27.0 on a grid night,
+   28.0 on solar. If it stays on 29 the `temperature` attribute is not readable
+   and the setpoint is being (correctly) withheld; that needs the aquatemp fork
+   looking at, not a code change.
+4. **The first stop.** `set_hvac_mode -> off`, then `Holding off on the pump`
+   for a few minutes while `pool_pdc_acceso` catches up, then the pump. If the
+   pump is ever commanded off *before* the PdC, stop and revert.
+5. **Phase A energy** over the night against `sensor.pool_cop_stimato` — §8
+   step 3 asks for the first real GRID night observed with it.
+
+### Kickstart prompt for the next session
+
+> Read `CLAUDE.md` then `STORY_POOL_CONTROLLER.md`. v0.2.0 and v0.3.0 are
+> built but **not deployed and never dry-run** — do that first (see "Before
+> turning the dry run off" in `CLAUDE.md`) and record the result under
+> "Dry-run result" below. Then STORY §8 step 4: winter mode + antifreeze
+> (§5.1 winter slot, the antifreeze latch, `pdc` blocked in winter) → v0.4.0,
+> before November. The law for it already exists and is tested at the pure
+> level — check what is missing is only the live wiring and the acceptance
+> §7.7 end-to-end. While you are there, the owner still owes answers on: the
+> cover sensor entity id, §5.4's daytime GRID top-up (`switch.pool_grid_day_topup`,
+> still PROPOSED), the SOLAR target's lack of hysteresis, and whether
+> antifreeze should survive `manual`/`closed` mode.
+
+---
+
 ## v0.2.0 — the pump and the chlorinator actuate (2026-09-17) — NOT YET DEPLOYED
 
 STORY §8 step 2. The control law is unchanged; what is new is that a decision
@@ -71,7 +162,7 @@ device agreeing again; a read gap neither writes nor counts against a device nor
 resets the settle window; the stop order really does cut the cell before the
 pump; `unload` still releases nothing.
 
-### Before turning the dry run off — HA-side, NOT done from here
+### Before turning the dry run off — HA-side, NOT done from here (still open)
 
 Retiring a live automation while the pool has no other chlorination control
 would leave the cell unmanaged, so this waits for the owner:
@@ -234,7 +325,7 @@ logger:
 11. **Log volume.** A handful of `DRY-RUN` lines per day, each with a reason.
     Dozens means something is flapping — that is a finding, not noise.
 
-### Kickstart prompt for the next session — DONE, this is what v0.2.0 did
+### Kickstart prompt (v0.1.0 -> v0.2.0) — DONE, this is what v0.2.0 did
 
 > Read `CLAUDE.md` then `STORY_POOL_CONTROLLER.md`. v0.1.0 ran 24 h dry —
 > the log comparison is in this file under "Dry-run result". Now do STORY §8

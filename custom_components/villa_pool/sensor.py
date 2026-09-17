@@ -137,7 +137,7 @@ class SupervisorReasonSensor(PoolSensorBase):
     def _actuation(self) -> dict:
         actuator = getattr(self._engine, "actuator", None)
         if actuator is None:
-            return {"writes": 0, "last_write": None, "latched": []}
+            return {"writes": 0, "last_write": None, "latched": [], "holding": []}
         return actuator.diagnostics()
 
 
