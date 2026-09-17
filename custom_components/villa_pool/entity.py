@@ -16,7 +16,11 @@ from .const import DOMAIN
 def pool_device(entry: ConfigEntry) -> DeviceInfo:
     return DeviceInfo(
         identifiers={(DOMAIN, entry.entry_id)},
-        name="Villa Pool",
+        # "Pool", not "Villa Pool": with `has_entity_name` the device name is
+        # the entity_id prefix, and STORY §4 specifies `switch.pool_dry_run`,
+        # `sensor.pool_supervisor_reason` and friends. Those ids are what the
+        # owner's dashboards and automations will reference.
+        name="Pool",
         manufacturer="Villa Pontacolone",
         model="Pool supervisor",
         entry_type=DeviceEntryType.SERVICE,

@@ -62,9 +62,9 @@ WINDOW_TIMES: tuple[WindowTime, ...] = (
                _t(DEFAULT_CHLORINE_START), "mdi:test-tube"),
     WindowTime("chlorine_end", "Chlorine end",
                _t(DEFAULT_CHLORINE_END), "mdi:test-tube-off"),
-    WindowTime("deadline", "Targets deadline", _t(DEFAULT_DEADLINE),
+    WindowTime("deadline", "Deadline", _t(DEFAULT_DEADLINE),
                "mdi:clock-alert-outline"),
-    WindowTime("winter_start", "Winter slot start", _t(DEFAULT_WINTER_START),
+    WindowTime("winter_start", "Winter start", _t(DEFAULT_WINTER_START),
                "mdi:snowflake-alert"),
 )
 

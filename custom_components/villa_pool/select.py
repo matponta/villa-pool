@@ -27,7 +27,7 @@ class PoolModeSelect(PoolEntity, SelectEntity, RestoreEntity):
     `winter` swaps the summer pump window for the noon slot and blocks the PdC.
     """
 
-    _attr_name = "Pool mode"
+    _attr_name = "Mode"
     _attr_icon = "mdi:pool"
     _attr_options = POOL_MODES
 

@@ -96,33 +96,33 @@ async def test_integration_loads(hass: HomeAssistant) -> None:
 async def test_the_settings_entities_exist(hass: HomeAssistant) -> None:
     await setup_pool(hass)
     for entity_id in (
-        "switch.villa_pool_dry_run",
-        "switch.villa_pool_grid_heating",
-        "switch.villa_pool_maintenance",
-        "select.villa_pool_pool_mode",
-        "number.villa_pool_minimum_temperature",
-        "time.villa_pool_pdc_grid_start",
-        "sensor.villa_pool_supervisor_reason",
-        "sensor.villa_pool_pdc_state",
-        "binary_sensor.villa_pool_solar_ok",
+        "switch.pool_dry_run",
+        "switch.pool_grid_heating",
+        "switch.pool_maintenance",
+        "select.pool_mode",
+        "number.pool_min_temp",
+        "time.pool_pdc_grid_start",
+        "sensor.pool_supervisor_reason",
+        "sensor.pool_pdc_state",
+        "binary_sensor.pool_solar_ok",
     ):
         assert hass.states.get(entity_id) is not None, entity_id
 
 
 async def test_dry_run_is_on_by_default(hass: HomeAssistant) -> None:
     await setup_pool(hass)
-    assert hass.states.get("switch.villa_pool_dry_run").state == "on"
+    assert hass.states.get("switch.pool_dry_run").state == "on"
 
 
 async def test_grid_heating_is_on_by_default(hass: HomeAssistant) -> None:
     """Owner decision §3: allowed from day one."""
     await setup_pool(hass)
-    assert hass.states.get("switch.villa_pool_grid_heating").state == "on"
+    assert hass.states.get("switch.pool_grid_heating").state == "on"
 
 
 async def test_min_temp_default_is_27(hass: HomeAssistant) -> None:
     await setup_pool(hass)
-    state = hass.states.get("number.villa_pool_minimum_temperature")
+    state = hass.states.get("number.pool_min_temp")
     assert float(state.state) == 27.0
 
 
@@ -162,7 +162,7 @@ async def test_turning_dry_run_off_still_writes_nothing(
     await setup_pool(hass, **{DEFAULT_WATER_TEMP: "24.0"})
     await hass.services.async_call(
         "switch", "turn_off",
-        {"entity_id": "switch.villa_pool_dry_run"}, blocking=True,
+        {"entity_id": "switch.pool_dry_run"}, blocking=True,
     )
     await tick(hass, times=3)
     assert calls == []
@@ -174,7 +174,7 @@ async def test_turning_dry_run_off_still_writes_nothing(
 async def test_reason_sensor_explains_every_actuator(hass: HomeAssistant) -> None:
     await setup_pool(hass, **{"input_boolean.pool_in_use": "on"})
     await tick(hass, times=2)
-    reason = hass.states.get("sensor.villa_pool_supervisor_reason")
+    reason = hass.states.get("sensor.pool_supervisor_reason")
     assert "pump" in reason.state
     assert "PdC" in reason.state
     assert "chlorine" in reason.state
@@ -183,7 +183,7 @@ async def test_reason_sensor_explains_every_actuator(hass: HomeAssistant) -> Non
 async def test_reason_attributes_carry_the_intent(hass: HomeAssistant) -> None:
     await setup_pool(hass, **{"input_boolean.pool_in_use": "on"})
     await tick(hass, times=2)
-    attrs = hass.states.get("sensor.villa_pool_supervisor_reason").attributes
+    attrs = hass.states.get("sensor.pool_supervisor_reason").attributes
     assert attrs["dry_run"] is True
     assert "would_pump_on" in attrs
     assert "would_pdc_state" in attrs
@@ -210,14 +210,14 @@ async def test_pump_problem_blocks_the_pdc(hass: HomeAssistant) -> None:
     })
     hass.states.async_set("binary_sensor.pompa_piscina_problem", "on")
     await tick(hass, times=2)
-    assert hass.states.get("sensor.villa_pool_pdc_state").state == PDC_BLOCKED
+    assert hass.states.get("sensor.pool_pdc_state").state == PDC_BLOCKED
 
 
 async def test_blocked_reason_is_published(hass: HomeAssistant) -> None:
     await setup_pool(hass)
     hass.states.async_set("binary_sensor.pompa_piscina_problem", "on")
     await tick(hass, times=2)
-    attrs = hass.states.get("sensor.villa_pool_supervisor_reason").attributes
+    attrs = hass.states.get("sensor.pool_supervisor_reason").attributes
     assert attrs["blocked_reason"] is not None
 
 
@@ -227,7 +227,7 @@ async def test_unavailable_pdc_suppresses_writes(hass: HomeAssistant) -> None:
     await setup_pool(hass)
     hass.states.async_set(DEFAULT_PDC_CLIMATE, "unavailable")
     await tick(hass, times=4)
-    attrs = hass.states.get("sensor.villa_pool_pdc_state").attributes
+    attrs = hass.states.get("sensor.pool_pdc_state").attributes
     assert attrs["write_allowed"] is False
 
 
@@ -241,7 +241,7 @@ async def test_grid_run_starts_at_23_00(hass: HomeAssistant) -> None:
             DEFAULT_TARIFF_BAND: "F3",
         })
         await tick(hass, times=2, freezer=frozen)
-        assert hass.states.get("sensor.villa_pool_pdc_state").state == PDC_GRID
+        assert hass.states.get("sensor.pool_pdc_state").state == PDC_GRID
 
 
 async def test_f2_refuses_grid_and_says_so(hass: HomeAssistant) -> None:
@@ -252,7 +252,7 @@ async def test_f2_refuses_grid_and_says_so(hass: HomeAssistant) -> None:
             DEFAULT_TARIFF_BAND: "F2",
         })
         await tick(hass, times=2, freezer=frozen)
-        reason = hass.states.get("sensor.villa_pool_supervisor_reason").state
+        reason = hass.states.get("sensor.pool_supervisor_reason").state
         assert "band F2" in reason
 
 
@@ -265,7 +265,7 @@ async def test_restart_mid_grid_resumes_grid(hass: HomeAssistant) -> None:
             "binary_sensor.pool_pdc_acceso": "on",   # it was running before
         })
         await tick(hass, freezer=frozen)
-        assert hass.states.get("sensor.villa_pool_pdc_state").state == PDC_GRID
+        assert hass.states.get("sensor.pool_pdc_state").state == PDC_GRID
 
 
 # --- unload ------------------------------------------------------------------
@@ -277,3 +277,56 @@ async def test_unload_releases_nothing_destructive(hass: HomeAssistant) -> None:
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
     assert calls == []
+
+
+# --- the §4 entity ids are a contract ----------------------------------------
+
+async def test_story_section_4_entity_ids(hass: HomeAssistant) -> None:
+    """STORY §4 names these entities explicitly, and the owner's dashboards and
+    automations will reference them. They are a contract, not an implementation
+    detail: under `has_entity_name` they come from the DEVICE name, so renaming
+    the device silently renames all of them."""
+    await setup_pool(hass)
+    for entity_id in (
+        # settings
+        "number.pool_target_turnovers",
+        "number.pool_target_chlorine_hours",
+        "number.pool_winter_chlorine_hours",
+        "number.pool_cover_chlorine_factor",
+        "number.pool_solar_target_temp",
+        "number.pool_min_temp",
+        "number.pool_solar_on_w",
+        "number.pool_solar_off_w",
+        "number.pool_filtration_speed",
+        "number.pool_pdc_speed",
+        "number.pool_antifreeze_speed",
+        "number.pool_antifreeze_on_c",
+        "number.pool_antifreeze_off_c",
+        "number.pool_winter_hours",
+        # windows
+        "time.pool_pump_start",
+        "time.pool_pump_end",
+        "time.pool_pdc_solar_start",
+        "time.pool_pdc_solar_end",
+        "time.pool_pdc_grid_start",
+        "time.pool_pdc_grid_end",
+        "time.pool_chlorine_start",
+        "time.pool_chlorine_end",
+        "time.pool_deadline",
+        # mode + switches
+        "select.pool_mode",
+        "switch.pool_grid_heating",
+        "switch.pool_maintenance",
+        "switch.pool_chlorine_target_control",
+        "switch.pool_dry_run",
+        # sensors
+        "sensor.pool_supervisor_reason",
+        "sensor.pool_pdc_state",
+        "sensor.pool_cop_stimato",
+        "sensor.pool_costo_termico_stimato",
+        "sensor.pool_volume_today",
+        "sensor.pool_chlorine_hours_missing",
+        "sensor.pool_cover_closed_for",
+        "binary_sensor.pool_solar_ok",
+    ):
+        assert hass.states.get(entity_id) is not None, entity_id

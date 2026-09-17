@@ -81,6 +81,17 @@ law decides → engine reports. No module skips a step.
 - `sensor.py` / `binary_sensor.py` — the diagnostic surface.
   `sensor.pool_supervisor_reason` is the primary output of v0.1.0.
 
+### Entity ids are a contract
+
+STORY §4 names the entities explicitly (`switch.pool_dry_run`,
+`sensor.pool_supervisor_reason`, `number.pool_min_temp`, …) and the owner's
+dashboards and automations reference those ids. Under `has_entity_name` the id
+prefix comes from the **device name**, so the device is called `Pool` (not
+`Villa Pool`) and each entity's `name` is chosen to slugify onto the §4 id —
+hence terse labels like "Solar on w" and "Min temp". Renaming the device would
+silently rename all 36 entities. Pinned by
+`tests/test_engine.py::test_story_section_4_entity_ids`.
+
 ### Two ordering facts that are load-bearing
 
 1. **The engine is constructed BEFORE the platforms and started AFTER them**
