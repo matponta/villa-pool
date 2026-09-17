@@ -71,6 +71,9 @@ to `False`/`0` on any input; unload releases nothing.
   for that hour once a year. Harmless while dry, but **fix before v0.2.0
   actuates** — move the timers to UTC and keep local time only for window
   comparisons.
+- **The SOLAR target has no hysteresis** (§5.2 as written). A probe dithering
+  on 28.0 gives ~4 starts over 5 h, bounded by MIN_OFF. A band would fix it but
+  would also forgo free solar top-up between 27.5 and 28.0 — owner's call.
 - **`chlorine_hours_today` unavailable reads as 0.0**, i.e. "no progress", which
   errs towards more chlorination. Consider holding the last known value instead.
 - Three STORY gaps are recorded in `CLAUDE.md` → *Known spec gaps*: §7.4's

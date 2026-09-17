@@ -153,7 +153,15 @@ These are recorded rather than silently resolved:
    maintenance/manual above antifreeze, so those modes currently freeze
    antifreeze too. Defensible (the owner has taken control) but worth a
    decision, since `closed` is exactly when the pipes are most at risk.
-4. **§5.4's daytime GRID top-up is NOT implemented** — it is explicitly marked
+4. **The SOLAR target has no hysteresis, by specification.** §5.2 stops SOLAR
+   at `water >= solar_target` and restarts below it — one threshold, both ways.
+   With the probe dithering on 28.0 that gives ~4 compressor starts over 5 h
+   (bounded by MIN_OFF, so not runaway). Adding a band would fix it but would
+   also stop the pool topping up on *free* sun between 27.5 and 28.0, so the
+   trade is the owner's, not an engineering call. Unlike the GRID hysteresis bug
+   (which was a real defect — the band existed and was being ignored), this is
+   the spec working as written.
+5. **§5.4's daytime GRID top-up is NOT implemented** — it is explicitly marked
    "PROPOSED, owner to confirm". `switch.pool_grid_day_topup` does not exist.
 
 ## Dev / deploy
