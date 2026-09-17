@@ -1,0 +1,63 @@
+# Cards added to `pool-overview-v2` for v0.4.0 (STORY §8 step 5).
+#
+# ALREADY APPLIED to the live dashboard on 2026-09-17. Kept here because the
+# dashboard is storage-mode and therefore lives only in HA's .storage — this
+# file is the versioned record of what was added and, if it ever has to come
+# out, the exact inverse is two JSON Patch removes:
+#
+#   [{"op": "remove", "path": "/views/0/sections/1/cards/2"},
+#    {"op": "remove", "path": "/views/0/sections/8/cards/17"}]
+#
+# ENTITY IDS: the live integration registers as `*.pool_poolbrain_*`, NOT the
+# `*.pool_*` of STORY §4 (the device carries the name PoolBrain). Everything on
+# the dashboard already uses the live ids, so these do too. A fresh re-add of
+# the integration would produce `*.pool_*` and break every card here — see
+# CLAUDE.md → "The live entity ids are not the §4 ids".
+
+# 1 · Controller section (`views[0].sections[1]`, after the existing markdown).
+#     The actuation surface added in v0.2.0-v0.4.0: what the supervisor has
+#     actually SENT, which levers it has given up on, and which it is holding
+#     back for a hydraulic reason. This is the card to read when the pool is
+#     not doing what the reason line says it should.
+- type: markdown
+  grid_options:
+    columns: full
+    rows: auto
+  content: >-
+    {% set a = 'sensor.pool_poolbrain_supervisor_reason' %}{% set latched =
+    state_attr(a,'latched') or [] %}{% set holding = state_attr(a,'holding') or
+    [] %}**Attuazione** — comandi inviati dall'avvio: **{{ state_attr(a,'writes')
+    or 0 }}** · ultimo: `{{ state_attr(a,'last_write') or '—' }}`
+
+    {% if latched %}
+
+    ⚠️ **Leve non più guidate: {{ latched | join(', ') }}.** Il supervisore ha
+    comandato due volte senza effetto e si è fermato. Le due cause sono
+    indistinguibili da qui: qualcuno comanda a mano, oppure il dispositivo non
+    accetta i comandi. Riparte da solo quando cambia l'intenzione o quando il
+    dispositivo torna dove serve.
+
+    {% endif %}{% if holding %}
+
+    ⏸ **In attesa: {{ holding | join(', ') }}.** È un blocco idraulico, non un
+    guasto: la velocità non scende sotto 80 % finché il clorinatore risulta
+    acceso, e la pompa non si ferma finché la PdC risulta in funzione. Entrambi
+    rimandano, non annullano.
+
+    {% endif %}{% if not latched and not holding %}
+
+    ✅ Nessuna leva contesa o in attesa.
+
+    {% endif %}
+
+# 2 · Settings section (`views[0].sections[8]`, right under the
+#     "Inverno e antigelo" subtitle). The latch itself, which until v0.4.0 was
+#     only readable as an attribute on the reason sensor.
+- type: tile
+  entity: binary_sensor.pool_poolbrain_antifreeze
+  name: Antigelo attivo
+  icon: mdi:snowflake-alert
+  color: light-blue
+  grid_options:
+    columns: 12
+    rows: 1

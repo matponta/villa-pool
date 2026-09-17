@@ -24,7 +24,12 @@ skeleton and conventions and shares nothing at runtime.**
 Target: Home Assistant **2026.8.3** (Python ≥ 3.14). Single instance,
 config-flow hub.
 
-## Status: v0.4.0 — winter mode and antifreeze are live.
+## Status: v0.4.0, deployed and actuating since 2026-09-17 20:04.
+
+**The integration is live on the owner's HA and `switch.pool_dry_run` is OFF.**
+Anything in this repo that reads as "not yet deployed" is stale — `NEXT_SESSION.md`
+opens with the verified live status. Treat changes accordingly: they reach a
+pool that is being driven, not a dry run.
 
 **`switch.pool_dry_run` is the gate, it is ON by default, and it is now real.**
 Through v0.1.0 there was no write path at all and the switch was only a
@@ -173,6 +178,20 @@ law decides → engine reports. No module skips a step.
 - `sensor.py` / `binary_sensor.py` — the diagnostic surface.
   `sensor.pool_supervisor_reason` is the primary output of v0.1.0.
 
+### The live entity ids are NOT the §4 ids
+
+Checked on the owner's HA 2026-09-17: the deployed integration registers as
+`sensor.pool_poolbrain_supervisor_reason`, `switch.pool_poolbrain_dry_run`,
+`number.pool_poolbrain_min_temp` and so on — the device carries the name
+**PoolBrain**. STORY §4 and `test_story_section_4_entity_ids` specify `*.pool_*`,
+and that test is not wrong: a fresh install with the device named `Pool` really
+does produce those ids. Both are true and they do not match.
+
+`pool-overview-v2` and `Villa-Pool-Manual-v0.4.0.html` use the LIVE ids, because
+that is what the owner's system answers to. **A fresh re-add of the integration
+would produce the §4 ids and break every card on that dashboard.** Do not
+"fix" either side without deciding which one is the contract.
+
 ### Entity ids are a contract
 
 STORY §4 names the entities explicitly (`switch.pool_dry_run`,
@@ -247,7 +266,11 @@ the same situation restarting the machine when the anchor is dropped.
   reads it, and nothing should until it is calibrated against logged sessions.
 - **Assign area `pool` to every entity/device** (owner rule). All entities hang
   off one service device so this is a single assignment.
-- Cards go on `pool-overview-v2`. Do not touch `pool-overview`.
+- Cards go on `pool-overview-v2`. Do not touch `pool-overview`. That dashboard
+  is **storage-mode and hand-built by the owner** — it is not generated from
+  this repo, and a full-config replacement would throw away work that lives
+  nowhere else. Add cards with `patch` against a fresh `config_hash`, record
+  what was added in a `dashboard_*_cards.yaml` here, and write down the inverse.
 
 ## Known spec gaps found while building (owner input wanted)
 
@@ -306,11 +329,13 @@ These are recorded rather than silently resolved:
   each release. Write the *verification* result, not just the intent.
 - Keep `CLAUDE.md` current in the same PR as the behaviour it documents.
 
-## Before turning `switch.pool_dry_run` off
+## Before turning `switch.pool_dry_run` off — DONE 2026-09-17
 
-These are HA-side steps, not code, and none of them has been done from here —
-retiring a live automation while the pool has no other chlorination control
-would leave the cell unmanaged, so it waits for the owner.
+All four steps below were completed by the owner, verified live on 2026-09-17:
+both chlorinator automations are `off`, the safety cutoff and every
+`pool_allerta_*` are `on`, and `pool_test_cop_notturno` is `off`. The
+integration has been actuating since 20:04. Kept here as the checklist for any
+future re-deploy.
 
 1. **Retire `automation.pool_chlorinator_daily_3h_run` (12:00, 6 h) and
    `automation.pool_chlorinator_follows_pool_in_use`** (STORY §2, §8 step 2).

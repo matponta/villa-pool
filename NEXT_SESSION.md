@@ -1,6 +1,90 @@
 # Next session — kickstart prompts
 
-## v0.4.0 — winter mode and antifreeze (2026-09-17) — NOT YET DEPLOYED
+## LIVE STATUS — read this before believing any "NOT YET DEPLOYED" below
+
+Checked against the owner's Home Assistant on **2026-09-17 ~21:30**, and it
+contradicts what the release notes under it say. **v0.4.0 is deployed and
+actuating.**
+
+- Config entry `01M2QBJM448GYF8R0R7K7VNSZ0`, `villa_pool`, state `loaded`,
+  entities registered at 20:04 local. Confirmed as v0.4.0 by the presence of
+  `binary_sensor.pool_poolbrain_antifreeze` and the `writes` / `last_write` /
+  `latched` / `holding` attributes.
+- **`switch.pool_poolbrain_dry_run` is OFF** — it is writing. At the time of the
+  check: `writes: 2`, `last_write: switch.turn_off pump='off'`, `latched: []`,
+  `holding: []`. Nothing contested, nothing deferred.
+- The deploy checklist was followed: `pool_chlorinator_daily_3h_run` **off**,
+  `pool_chlorinator_follows_pool_in_use` **off**, `pool_test_cop_notturno`
+  **off**, the safety cutoff and every `pool_allerta_*` **on**.
+- Owner-tuned settings, deliberately away from the shipped defaults: min temp
+  **29.0** (default 27.0), solar target **30.0** (28.0), chlorine hours **7**
+  (8). `sensor.pool_poolbrain_cover_closed_for` is `unavailable` — the cover
+  sensor still does not exist, so every cover rule is still inert.
+
+**This is a snapshot ~1.5 h after going live, not the 24 h comparison §8 step 1
+asked for.** That comparison has still not been written up. The claim worth
+checking over a full day is unchanged: every state change on
+`switch.pompa_piscina`, `switch.clorinatore` and `climate.pool_pdc_piscina`
+should be attributable to a `WRITE` line in the `villa_pool` log with its
+reason, and to nothing else.
+
+### The live entity ids are NOT the §4 ids
+
+Live: `sensor.pool_poolbrain_supervisor_reason`,
+`switch.pool_poolbrain_dry_run`, `number.pool_poolbrain_min_temp`, … The device
+carries the name **PoolBrain**, so every id has that in it. STORY §4 and
+`tests/test_engine.py::test_story_section_4_entity_ids` specify `*.pool_*`, and
+that test passes because a fresh install with the device named `Pool` really
+does produce those ids. **Both are true and they do not match.** The dashboard
+and the manual use the live ids. A fresh re-add of the integration would produce
+the §4 ids and break every card. Worth a deliberate decision rather than
+discovering it during a reinstall.
+
+---
+
+## v0.5.0 — dashboard cards + owner manual (2026-09-17)
+
+STORY §8 step 5. Mostly delivery rather than code.
+
+**The dashboard already existed** and is extensive and hand-built — this did not
+rebuild it. Two cards were added to `pool-overview-v2`, for the surface v0.2.0
+through v0.4.0 introduced and the dashboard predated:
+
+1. **Attuazione** (controller section) — commands sent since start, the last one,
+   and a warning naming any lever the supervisor has stopped driving (`latched`)
+   or is holding back for a hydraulic reason (`holding`). This is the card to
+   read when the pool is not doing what the reason line says it should.
+2. **Antigelo attivo** (settings section) — `binary_sensor.pool_poolbrain_antifreeze`,
+   which until v0.4.0 was only readable as an attribute.
+
+Both applied live and verified: the template renders, and the cards resolve at
+`views[0].sections[1].cards[2]` and `views[0].sections[8].cards[17]`. The
+dashboard is storage-mode, so `dashboard_v0.4.0_cards.yaml` in this repo is the
+versioned record — including the exact inverse, two JSON Patch removes, if it
+ever has to come out.
+
+**The manual** is `Villa-Pool-Manual-v0.4.0.html`, in Italian, matching the
+villa-hvac convention (those were HTML printed to PDF from a browser — Skia/PDF,
+8 pages). Print it to `Villa-Pool-Manual-v0.4.0.pdf` with Cmd-P → Save as PDF;
+the print stylesheet is A4 with 16 mm margins and avoids breaking inside
+callouts and tables. Eleven sections in hydraulic order, covering what the owner
+actually needs at the pool house: the dry-run switch, the five modes, the
+priority ladder, why "pump running" is never watts, the four PdC states and the
+three rules that protect the compressor, the chlorinator's two overriding rules,
+winter and antifreeze, how commands are sent, and a four-step "when something
+looks wrong". Also published as an artifact for reading on a phone.
+
+### Pre-tag adversarial review
+
+Nothing found in the cards — they are additive, use existing card types, and the
+Jinja was evaluated against the live system before it went in rather than after.
+The findings of this step were all in the *discovery*, not the code: the repo
+believed nothing had been deployed when in fact everything had, and the live
+entity ids diverge from the §4 contract. Both are recorded above.
+
+---
+
+## v0.4.0 — winter mode and antifreeze (2026-09-17)
 
 STORY §8 step 4, a month and a half early. The pure law for §5.1's winter slot
 and the antifreeze latch shipped back in v0.1.0 and was already tested at the
@@ -100,7 +184,7 @@ either tune `pool_portata_minima` or raise `number.pool_antifreeze_speed`
 
 ---
 
-## v0.3.0 — the PdC state machine actuates (2026-09-17) — NOT YET DEPLOYED
+## v0.3.0 — the PdC state machine actuates (2026-09-17) — superseded; see LIVE STATUS
 
 STORY §8 step 3. The law is again unchanged; `PDC_ACTUATION_IMPLEMENTED` flips
 to True and the climate levers are built. HA writes only `climate.set_hvac_mode`
@@ -191,7 +275,7 @@ first evening.
 
 ---
 
-## v0.2.0 — the pump and the chlorinator actuate (2026-09-17) — NOT YET DEPLOYED
+## v0.2.0 — the pump and the chlorinator actuate (2026-09-17) — superseded; see LIVE STATUS
 
 STORY §8 step 2. The control law is unchanged; what is new is that a decision
 can now become a service call. **`switch.pool_dry_run` is ON by default and is
@@ -292,7 +376,7 @@ would leave the cell unmanaged, so this waits for the owner:
 
 ---
 
-## v0.1.0 — repo scaffold + dry-run supervisor (2026-09-17) — NOT YET DEPLOYED
+## v0.1.0 — repo scaffold + dry-run supervisor (2026-09-17) — superseded; see LIVE STATUS
 
 First release. Scaffolded from the `villa-hvac` skeleton (config-flow hub, one
 engine tick, pure `supervisor/` modules, settings as the integration's own
@@ -441,9 +525,9 @@ logger:
 
 ### Dry-run result
 
-_(still to be filled in — v0.1.0 was never deployed, so the 24 h comparison has
-not happened. v0.2.0 was written against the code rather than against a day of
-logs; the dry run is still owed before anything is turned live.)_
+_(still owed. The integration went live on 2026-09-17 at 20:04 without a written
+24 h dry comparison — see LIVE STATUS at the top of this file for what was
+verified instead, which is a snapshot rather than a day.)_
 
 ### Still open for the owner
 
