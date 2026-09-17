@@ -136,7 +136,7 @@ alert automations (`pool_allerta_*`) — they are the owner's independent watchd
 | Windows | Same every day → time entities, not schedules. Pump 08:00–20:00 · PdC solar 10:00–18:00 · PdC grid 23:00–07:00 (crosses midnight) · chlorine 09:00–21:00. **Open (17/9): §5.4 proposes a daytime GRID top-up in F1 because COP is far better in warm air — owner to confirm.** |
 | COP | Measured 2.82 (night, ~18 °C air, 95 Hz). Model COP vs outdoor air per §5.4; use it for estimates, log sessions to calibrate. |
 | Filtration speed | 80 % for now (bypass calibrated at 80 %, ΔT 2 K; chlorinator flow-switch minimum unknown). Step-down test later. |
-| Winter mode | Pump ≥ 2 h/day from 12:00 at 80 % with chlorine enabled; PdC off. **Antifreeze**: outdoor < 0 °C → pump continuous at `antifreeze_speed` (default 30 %, **tunable 30–80**), chlorinator OFF, release at ≥ +2 °C. |
+| Winter mode | Pump ≥ 2 h/day from 12:00 at 80 % with chlorine enabled; PdC off. **Antifreeze**: outdoor < 0 °C → pump continuous at `antifreeze_speed` (default 30 %, **tunable 30–80**), chlorinator OFF, release at ≥ +2 °C. *(Amended 2026-09-17: antifreeze also runs in `manual`/`closed` — see §5.5.)* |
 | Cover | Physical sensor is primary. Image detection (AI Task) postponed. Alert at Chiudi Casa if open. |
 | Pool volume | 90 m³ for turnover math (documents say 67–81; 90 is the conservative side). |
 
@@ -277,6 +277,22 @@ deadline logic then reads: "reach min_temp by 19:00 in F1; if not, resume at
 (chlorine OFF, even with pool_in_use) → 4 antifreeze → 5 pool_in_use → 6 SOLAR →
 7 GRID → 8 targets/catch-up → 9 pump window.
 
+**AMENDMENT 2026-09-17 (owner), shipped in v0.4.0 — antifreeze outranks `manual`
+and `closed`.** As written, rung 1 sat above antifreeze, so the supervisor
+stopped protecting the pipes in `closed` — which is the mode the pool spends the
+entire winter in, unattended, and therefore exactly when they are most at risk.
+Being wrong one way costs a stopped pump for a few hours; the other way it costs
+burst pipes. In those two modes a freeze now runs the pump at `antifreeze_speed`
+and cuts the chlorinator (which §6 requires anyway before the speed may drop
+below 80 %); the PdC is left alone, because the mode is still the owner's.
+Having *started* the pump, the supervisor also stops it when the freeze
+releases.
+
+`maintenance` is deliberately unchanged and still freezes antifreeze too:
+someone is physically at the pool, possibly with it drained or the valves shut,
+so starting a pump under them is a hazard rather than a protection — and it
+expires by itself after 4 h, where `closed` lasts months.
+
 ## 6. Guardrails (learned the hard way on this system)
 
 - **Never base "pump running" on phase C watts.** P ∝ speed³: 427 W at 80 % →
@@ -323,11 +339,13 @@ deadline logic then reads: "reach min_temp by 19:00 in F1; if not, resume at
    inputs above with the defaults pre-filled), engine tick, CLAUDE.md, tests
    skeleton, HACS install → v0.1.0 with **no actuation** (dry-run switch ON by
    default; log intended writes only). Run 24 h dry, compare logs with reality.
+   Code DONE 17/9; **the 24 h dry run is still outstanding.**
 2. Pump + chlorine supervisor (5.1, 5.3, ladder) → v0.2.0. Retire the two
-   chlorinator automations.
+   chlorinator automations. Code DONE 17/9; **the two automations are still
+   live** — retiring them is an HA-side step for the owner.
 3. PdC state machine (5.2) → v0.3.0. First real night of GRID observed with
-   phase A energy.
-4. Winter mode + antifreeze → v0.4.0 (before November).
+   phase A energy. Code DONE 17/9; the observed night is still outstanding.
+4. Winter mode + antifreeze → v0.4.0 (before November). DONE 17/9.
 5. Dashboard cards on `pool-overview-v2` + manual PDF (villa-hvac style).
 
 ## 9. Open items handed over (not blockers)

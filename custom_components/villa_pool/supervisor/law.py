@@ -75,6 +75,76 @@ def decide(state: PoolState, mem: Memory) -> tuple[Decision, Memory]:
     if state.maintenance or state.mode in FROZEN_MODES:
         why = "maintenance" if state.maintenance else f"mode {state.mode}"
         mem = replace(mem, pdc_state=PDC_BLOCKED, pdc_since=mem.pdc_since or mono)
+
+        # AMENDMENT 2026-09-17 (owner): antifreeze outranks `manual` and
+        # `closed`. §5.5 as written put both above antifreeze, which meant the
+        # supervisor stopped protecting the pipes in `closed` — the mode the
+        # pool spends the whole winter in, unattended. The cost of being wrong
+        # in one direction is a stopped pump for a few hours; in the other it
+        # is burst pipes.
+        #
+        # `maintenance` deliberately still freezes everything, antifreeze
+        # included: it means someone is physically at the pool, possibly with
+        # it drained or the valves shut, and starting a pump under them is a
+        # hazard rather than a protection. It also expires by itself after 4 h,
+        # so the exposure is bounded — `closed` lasts months.
+        if mem.antifreeze_active and not state.maintenance:
+            mem = replace(mem, antifreeze_owns_pump=True)
+            pump_on, pump_speed, requesters = pump_plan(
+                cfg=cfg, window_open=False, winter_slot=False,
+                pdc_wants_flow=False, chlorine_wants=False, pool_in_use=False,
+                antifreeze=True, catchup=False, postrun=False,
+            )
+            return (
+                Decision(
+                    pump_on=pump_on,
+                    pump_speed=pump_speed,
+                    pdc_state=PDC_BLOCKED,
+                    # The cell is cut as part of antifreeze (§3) — and it has
+                    # to be, or the §6 guardrail would refuse to take the pump
+                    # down to `antifreeze_speed` with it still enabled.
+                    chlorine_on=False,
+                    reason=(
+                        f"ANTIFREEZE overrides {why}: pump ON {pump_speed}% "
+                        f"(antifreeze); chlorine OFF; PdC left alone ({why})."
+                    ),
+                    requesters=requesters,
+                    blocked_reason=why,
+                    # The heat pump stays the owner's while the mode is theirs:
+                    # it is blocked either way, and writing `off` to it would
+                    # be more than freeze protection asked for.
+                    pdc_write=False,
+                    detail={"frozen": True, "antifreeze": True,
+                            "antifreeze_override": why},
+                ),
+                mem,
+            )
+
+        # The freeze is over but the pump is one WE started. Stopping it is not
+        # "driving the pool" — it is finishing what antifreeze began. The
+        # actuator is idempotent, so this is one command and then silence; and
+        # keeping it asserted rather than firing once means a command that does
+        # not land is still re-asserted instead of leaving the pump running
+        # until the owner next looks at the pool house.
+        if mem.antifreeze_owns_pump and not state.maintenance:
+            return (
+                Decision(
+                    pump_on=False,
+                    pump_speed=None,
+                    pdc_state=PDC_BLOCKED,
+                    chlorine_on=False,
+                    reason=(
+                        f"Antifreeze released in {why}: stopping the pump the "
+                        "supervisor started. Nothing else is driven."
+                    ),
+                    blocked_reason=why,
+                    pdc_write=False,
+                    detail={"frozen": True, "antifreeze": False,
+                            "antifreeze_owns_pump": True},
+                ),
+                mem,
+            )
+
         return (
             Decision(
                 pump_on=False,
@@ -89,7 +159,7 @@ def decide(state: PoolState, mem: Memory) -> tuple[Decision, Memory]:
                 # work on the pool, and stopping the pump under them is the
                 # opposite of what they asked for.
                 actuate=False,
-                detail={"frozen": True},
+                detail={"frozen": True, "antifreeze": mem.antifreeze_active},
             ),
             mem,
         )
@@ -110,6 +180,9 @@ def decide(state: PoolState, mem: Memory) -> tuple[Decision, Memory]:
     )
 
     antifreeze = mem.antifreeze_active
+    # Out of the frozen modes the ordinary law owns the pump again, so the
+    # antifreeze hand-back is complete.
+    mem = replace(mem, antifreeze_owns_pump=False)
 
     # --- chlorine (rungs 3, 4, 5, 8) -----------------------------------------
     # The pump follows demand, so the chlorinator's *demand* has to be known
@@ -236,6 +309,8 @@ def restore_memory(
     in_grid_window: bool,
     solar_ok: bool,
     pump_running: bool | None = None,
+    outdoor_temp: float | None = None,
+    antifreeze_off_c: float = 0.0,
 ) -> Memory:
     """Re-derive the Memory after a HA restart (STORY §6, §7.10).
 
@@ -256,6 +331,16 @@ def restore_memory(
     demonstrably predates the restart. Without this the first minute after every
     restart reads as "pump not in marcia", which would block the PdC and write
     `off` -> `heat`: precisely the spurious extra start §7.10 forbids.
+
+    **Antifreeze is re-derived against the RELEASE threshold**, not the engage
+    one. The latch is history we cannot recover: at +1 °C, inside the 0..+2
+    band, a restart cannot tell whether antifreeze was running. Re-deriving
+    from `antifreeze_on_c` would answer "no" and stop the pump in the middle of
+    a cold snap; re-deriving from `antifreeze_off_c` answers "yes" and costs
+    ~22 W until the air passes +2. That is the same asymmetry `antifreeze_step`
+    already applies to an unknown temperature, for the same reason: when the
+    question is whether the pipes are freezing, fail towards keeping the water
+    moving.
     """
     if pump_running is None:
         pump_running = bool(pdc_running)
@@ -282,5 +367,8 @@ def restore_memory(
         solar_lost_since=None if solar_ok else mono,
         pump_running_since=(
             mono - timedelta(seconds=PUMP_CONFIRM_S) if pump_running else None
+        ),
+        antifreeze_active=(
+            outdoor_temp is not None and outdoor_temp < antifreeze_off_c
         ),
     )

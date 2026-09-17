@@ -24,7 +24,7 @@ skeleton and conventions and shares nothing at runtime.**
 Target: Home Assistant **2026.8.3** (Python ≥ 3.14). Single instance,
 config-flow hub.
 
-## Status: v0.3.0 — the pump, the chlorinator and the PdC are all driven.
+## Status: v0.4.0 — winter mode and antifreeze are live.
 
 **`switch.pool_dry_run` is the gate, it is ON by default, and it is now real.**
 Through v0.1.0 there was no write path at all and the switch was only a
@@ -71,6 +71,36 @@ owns the entity ids, the services, the order and the logging. Four rules:
    while `switch.clorinatore` still reads on (§6), and the pump is never
    stopped while `binary_sensor.pool_pdc_acceso` still reads on. Both defer
    rather than cancel, and both fail towards *more* flow.
+
+### Antifreeze outranks `manual` and `closed` (owner amendment, 2026-09-17)
+
+STORY §5.5 as written put rung 1 above antifreeze, so the supervisor stopped
+protecting the pipes in `closed` — the mode the pool spends the whole winter in,
+unattended. The amendment is recorded in the STORY itself, dated; this is the
+engineering half of it.
+
+In `manual` and `closed`, a freeze now:
+
+- runs the pump at `antifreeze_speed`, and **cuts the chlorinator** — which is
+  not optional, because §6 refuses to take the speed below 80 % while the cell
+  is enabled, so antifreeze that did not cut it could not run at all;
+- leaves the PdC alone (`pdc_write=False`): it is blocked either way, and
+  writing `off` to it is more than freeze protection asked for;
+- **stops the pump again when the freeze releases.** `Memory.antifreeze_owns_pump`
+  is what makes that possible. Without it the release reverts to "not driving
+  anything" and the pump the supervisor started runs until someone visits the
+  pool house. The stop stays asserted rather than firing once, so a command
+  that does not land is still re-asserted.
+
+`maintenance` is deliberately unchanged and still freezes antifreeze too:
+someone is physically at the pool, possibly with it drained, and it expires by
+itself after 4 h where `closed` lasts months.
+
+**The antifreeze latch is re-derived on restart against the RELEASE threshold**,
+not the engage one. At +1 °C, inside the 0..+2 band, a fresh `Memory` cannot
+know whether antifreeze was running; answering "no" stops the pump mid-cold-snap,
+answering "yes" costs ~22 W until the air passes +2. Same asymmetry
+`antifreeze_step` already applies to an unknown temperature.
 
 ### The PdC is the lever that can be damaged by being asked twice
 
@@ -235,10 +265,9 @@ These are recorded rather than silently resolved:
    (09-21), so that state cannot occur. The branch is implemented and tested
    with a narrowed chlorine window. Harmless, but it means the feature does
    nothing as configured.
-3. **Antifreeze in `manual`/`closed` mode.** The §5.5 ladder puts
-   maintenance/manual above antifreeze, so those modes currently freeze
-   antifreeze too. Defensible (the owner has taken control) but worth a
-   decision, since `closed` is exactly when the pipes are most at risk.
+3. ~~**Antifreeze in `manual`/`closed` mode.**~~ **RESOLVED 2026-09-17**: the
+   owner amended §5.5 so antifreeze outranks both. Shipped in v0.4.0; see
+   *Antifreeze outranks `manual` and `closed`* above. `maintenance` still wins.
 4. **The SOLAR target has no hysteresis, by specification.** §5.2 stops SOLAR
    at `water >= solar_target` and restarts below it — one threshold, both ways.
    With the probe dithering on 28.0 that gives ~4 compressor starts over 5 h
@@ -307,3 +336,11 @@ would leave the cell unmanaged, so it waits for the owner.
   release — the integration must not fight a running one-shot (§6).
 - **§5.4's daytime GRID top-up is still PROPOSED** and unimplemented;
   `switch.pool_grid_day_topup` does not exist. Owner to confirm.
+- **§9's "flow at 30 %" is now load-bearing.** `binary_sensor.pool_pompa_in_marcia`
+  needs flow >= `input_number.pool_portata_minima` (1 m3/h). If the pump at
+  `antifreeze_speed` does not reach that, the sensor reads OFF while the pump is
+  genuinely running — which the integration survives (nothing in the antifreeze
+  path needs the confirmation) but which WILL make
+  `automation.pool_allerta_pompa_ferma_da_24h` cry wolf through a cold snap.
+  Measure the flow at 30 % at the first cold weather and tune
+  `pool_portata_minima`, or raise `number.pool_antifreeze_speed`.

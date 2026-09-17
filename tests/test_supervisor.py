@@ -17,9 +17,14 @@ from custom_components.villa_pool.const import (
     BAND_F2,
     BAND_F3,
     COP_REF,
+    DEFAULT_ANTIFREEZE_OFF_C,
+    DEFAULT_ANTIFREEZE_SPEED,
+    DEFAULT_MIN_TEMP,
+    MODE_AUTO,
     MODE_CLOSED,
     MODE_FILTRATION_ONLY,
     MODE_MANUAL,
+    MODE_WINTER,
     PDC_BLOCKED,
     PDC_GRID,
     PDC_OFF,
@@ -34,6 +39,7 @@ from custom_components.villa_pool.supervisor import (
     in_window,
     is_confirmed,
     pump_plan,
+    restore_memory,
     solar_step,
     thermal_cost,
     window_length,
@@ -504,3 +510,176 @@ class TestDaylightSaving:
         st = self.cold_night(at(2026, 3, 29, 23, 30), anchor)
         dec, _ = decide(st, memory(anchor))
         assert dec.pdc_state == PDC_GRID
+
+
+# --- winter and antifreeze (v0.4.0) ------------------------------------------
+
+class TestAntifreezeOutranksTheFrozenModes:
+    """Owner amendment 2026-09-17 to STORY §5.5.
+
+    As written, rung 1 (`maintenance` / `manual` / `closed`) sat above
+    antifreeze — so the supervisor stopped protecting the pipes in `closed`,
+    which is the mode the pool spends the entire winter in, unattended. The
+    cost of being wrong one way is a stopped pump for a few hours; the other
+    way it is burst pipes.
+    """
+
+    def freezing(self, mode, **kw):
+        now = at(2026, 12, 15, 3, 0)
+        st = state(now, mode=mode, outdoor_temp=-1.0, water_temp=8.0, **kw)
+        return decide(st, memory(now))
+
+    @pytest.mark.parametrize("mode", [MODE_MANUAL, MODE_CLOSED])
+    def test_the_pump_still_runs(self, mode):
+        dec, _ = self.freezing(mode)
+        assert dec.pump_on is True
+        assert dec.pump_speed == DEFAULT_ANTIFREEZE_SPEED
+
+    @pytest.mark.parametrize("mode", [MODE_MANUAL, MODE_CLOSED])
+    def test_the_cell_is_cut(self, mode):
+        """Not optional: §6 refuses to take the pump below 80 % with the
+        chlorinator enabled, so antifreeze that did not cut it could not run at
+        `antifreeze_speed` at all."""
+        dec, _ = self.freezing(mode)
+        assert dec.chlorine_on is False
+
+    @pytest.mark.parametrize("mode", [MODE_MANUAL, MODE_CLOSED])
+    def test_the_heat_pump_is_left_alone(self, mode):
+        """The mode is still the owner's. Freeze protection asked for flow, not
+        for the machine."""
+        dec, _ = self.freezing(mode)
+        assert dec.pdc_state == PDC_BLOCKED
+        assert dec.pdc_write is False
+
+    @pytest.mark.parametrize("mode", [MODE_MANUAL, MODE_CLOSED])
+    def test_the_reason_says_it_is_overriding(self, mode):
+        dec, _ = self.freezing(mode)
+        assert "ANTIFREEZE overrides" in dec.reason
+        assert dec.detail["antifreeze_override"] == f"mode {mode}"
+
+    @pytest.mark.parametrize("mode", [MODE_MANUAL, MODE_CLOSED])
+    def test_a_warm_day_in_the_same_mode_still_drives_nothing(self, mode):
+        now = at(2026, 12, 15, 3, 0)
+        st = state(now, mode=mode, outdoor_temp=12.0, water_temp=8.0)
+        dec, _ = decide(st, memory(now))
+        assert dec.pump_on is False
+        assert dec.actuate is False
+
+    def test_maintenance_still_freezes_antifreeze_too(self):
+        """Deliberate, and the one case that did NOT change: maintenance means
+        someone is physically at the pool, possibly with it drained or the
+        valves shut, so starting a pump under them is a hazard rather than a
+        protection. It also expires by itself after 4 h — `closed` lasts
+        months."""
+        dec, _ = self.freezing(MODE_AUTO, maintenance=True)
+        assert dec.pump_on is False
+        assert dec.actuate is False
+        assert dec.detail["antifreeze"] is True     # engaged, and deliberately ignored
+
+    def test_the_override_actuates_where_the_plain_freeze_does_not(self):
+        cold, _ = self.freezing(MODE_CLOSED)
+        assert cold.actuate is True
+
+
+class TestAntifreezeSurvivesARestart:
+    """The latch is history, and a restart does not have it.
+
+    At +1 °C — inside the 0..+2 band — a fresh `Memory` cannot tell whether
+    antifreeze was running. Re-deriving from the ENGAGE threshold answers "no"
+    and stops the pump in the middle of a cold snap.
+    """
+
+    def restored(self, outdoor):
+        now = at(2026, 12, 15, 3, 0)
+        return restore_memory(
+            mono=now, pdc_running=False, pump_running=True, water_temp=8.0,
+            min_temp=DEFAULT_MIN_TEMP, band=BAND_F3, grid_heating=True,
+            in_grid_window=True, solar_ok=False,
+            outdoor_temp=outdoor, antifreeze_off_c=DEFAULT_ANTIFREEZE_OFF_C,
+        )
+
+    def test_a_restart_inside_the_band_keeps_the_pump_running(self):
+        now = at(2026, 12, 15, 3, 0)
+        mem = self.restored(1.0)
+        dec, _ = decide(
+            state(now, mode=MODE_WINTER, outdoor_temp=1.0, water_temp=8.0), mem
+        )
+        assert dec.pump_on is True
+        assert dec.pump_speed == DEFAULT_ANTIFREEZE_SPEED
+
+    def test_a_restart_above_the_release_threshold_does_not_engage(self):
+        assert self.restored(5.0).antifreeze_active is False
+
+    def test_an_unknown_outdoor_temperature_does_not_invent_a_freeze(self):
+        """`antifreeze_step` then holds whatever this produced, so guessing ON
+        here would latch a freeze that never happened until the probe came
+        back."""
+        assert self.restored(None).antifreeze_active is False
+
+    @pytest.mark.parametrize("outdoor,expected", [
+        (-5.0, True), (-0.1, True), (0.0, True), (1.9, True),
+        (2.0, False), (10.0, False),
+    ])
+    def test_re_derivation_uses_the_release_threshold(self, outdoor, expected):
+        assert self.restored(outdoor).antifreeze_active is expected
+
+
+class TestAntifreezeStopsWhatItStarted:
+    """Having STARTED the pump in a frozen mode, the supervisor has to stop it.
+
+    Without this the release reverts to "not driving anything" and the pump the
+    supervisor turned on runs for the rest of the winter — in `closed`, the
+    mode nobody looks at.
+    """
+
+    def episode(self, mode=MODE_CLOSED):
+        now = at(2026, 12, 15, 3, 0)
+        cold = state(now, mode=mode, outdoor_temp=-1.0, water_temp=8.0)
+        dec, mem = decide(cold, memory(now))
+        assert dec.pump_on is True
+        warm = state(now + timedelta(hours=6), mode=mode, outdoor_temp=5.0,
+                     water_temp=8.0, pump_running=True)
+        return warm, mem
+
+    def test_the_release_commands_the_pump_off(self):
+        warm, mem = self.episode()
+        dec, _ = decide(warm, mem)
+        assert dec.pump_on is False
+        assert dec.actuate is True
+        assert "stopping the pump the supervisor started" in dec.reason
+
+    def test_it_keeps_asserting_rather_than_firing_once(self):
+        """A command that does not land must still be re-asserted; the actuator
+        needs the intent to persist across ticks to do that."""
+        warm, mem = self.episode()
+        for _ in range(5):
+            dec, mem = decide(warm, mem)
+            assert dec.pump_on is False
+            assert dec.actuate is True
+
+    def test_nothing_else_is_driven_on_the_way_out(self):
+        warm, mem = self.episode()
+        dec, _ = decide(warm, mem)
+        assert dec.chlorine_on is False
+        assert dec.pdc_write is False
+
+    def test_leaving_the_frozen_mode_hands_the_pump_back(self):
+        warm, mem = self.episode()
+        _, mem = decide(warm, mem)
+        back = replace(warm, mode=MODE_AUTO)
+        _, mem2 = decide(back, mem)
+        assert mem2.antifreeze_owns_pump is False
+
+    def test_a_frozen_mode_that_never_froze_still_drives_nothing(self):
+        """The latch is what authorises the stop, not the mode."""
+        now = at(2026, 12, 15, 3, 0)
+        mild = state(now, mode=MODE_CLOSED, outdoor_temp=12.0, water_temp=8.0,
+                     pump_running=True)
+        dec, _ = decide(mild, memory(now))
+        assert dec.actuate is False
+
+    def test_maintenance_during_the_release_still_freezes(self):
+        """Someone is at the pool; the stop waits for them to finish."""
+        warm, mem = self.episode()
+        dec, _ = decide(replace(warm, maintenance=True), mem)
+        assert dec.actuate is False

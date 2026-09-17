@@ -168,6 +168,12 @@ class Memory:
     pump_running_since: datetime | None = None  # for the 60 s confirmation
     postrun_until: datetime | None = None      # pump post-run after a PdC stop
     antifreeze_active: bool = False
+    # Set while antifreeze is driving the pump in a mode that would otherwise
+    # freeze the supervisor out (`manual` / `closed`). Having STARTED the pump,
+    # the supervisor is responsible for stopping it: without this the release
+    # simply reverts to "not driving anything" and leaves the pump running for
+    # the rest of the winter.
+    antifreeze_owns_pump: bool = False
     maintenance_since: datetime | None = None
 
 

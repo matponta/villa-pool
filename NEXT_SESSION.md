@@ -1,5 +1,105 @@
 # Next session — kickstart prompts
 
+## v0.4.0 — winter mode and antifreeze (2026-09-17) — NOT YET DEPLOYED
+
+STORY §8 step 4, a month and a half early. The pure law for §5.1's winter slot
+and the antifreeze latch shipped back in v0.1.0 and was already tested at the
+§7.7 level, so this release is the live wiring, the visibility, an owner
+decision and two real gaps. **229 tests.**
+
+**The owner amended STORY §5.5.** Antifreeze now outranks `manual` and `closed`.
+As written, rung 1 sat above antifreeze, so the supervisor stopped protecting
+the pipes in `closed` — the mode the pool spends the whole winter in,
+unattended, and therefore exactly when they are most at risk. In those two modes
+a freeze runs the pump at `antifreeze_speed` and cuts the chlorinator (which §6
+requires anyway before the speed may drop below 80 %), and leaves the PdC alone.
+The amendment is recorded in the STORY itself, dated. `maintenance` is
+deliberately unchanged and still freezes antifreeze too: someone is physically
+at the pool, possibly with it drained, and it expires by itself after 4 h where
+`closed` lasts months.
+
+**New: `binary_sensor.pool_antifreeze`** (device class `cold`), carrying the
+thresholds, the speed and `overrides_mode`. In winter it is the one thing worth
+being able to see at a glance, and reading it out of an attribute on the reason
+sensor is not glancing. New entity id, so it is a contract from here on.
+
+**New: a push on both edges of the freeze latch** (owner's call), edge-triggered
+like the hardware blocks — a freeze lasts days, not ticks.
+
+### Pre-tag adversarial review — two real defects, and a replay
+
+1. **Antifreeze released in a frozen mode left the pump running — for the rest
+   of the winter.** The override starts the pump; the release reverted to
+   "Frozen: mode closed — supervisor is not driving anything", which is
+   hands-off and therefore never commands it back off. In `closed`, nobody is
+   looking. Found by asking what the *end* of the episode looked like rather
+   than the start. `Memory.antifreeze_owns_pump` now records that the pump is
+   ours, and the stop stays asserted rather than firing once, so a command that
+   does not land is still re-asserted. Handed back the moment the mode leaves
+   the frozen set.
+
+2. **A restart inside the hysteresis band silently dropped antifreeze.** The
+   latch is history and `restore_memory` did not re-derive it, so at +1 °C —
+   inside the 0..+2 band — a restart mid-cold-snap answered "not freezing" and
+   stopped the pump. It is now re-derived against the RELEASE threshold, not
+   the engage one: answering "yes" costs ~22 W until the air passes +2,
+   answering "no" costs a stopped pump in a cold snap. Same asymmetry
+   `antifreeze_step` already applies to an unknown temperature.
+
+3. **Replayed a winter week offline through the law and the planner**, with the
+   air swinging through zero every night plus a two-day hard freeze. Six
+   antifreeze episodes, the shortest **10 h 42 m** — no chattering, which is
+   what the 0/+2 band exists to prevent. In `closed`: **one pump command per
+   transition** (11 for 6 episodes), one speed command and one chlorine command
+   *for the whole week*, and the invariant "antifreeze off for >10 min implies
+   the pump is off" held on every tick. In `winter`: 3 pump commands a day,
+   which is the noon slot plus the nightly freeze — correct, not noise.
+
+Also checked and found correct: the §6 speed guardrail applies in the antifreeze
+path too (30 % waits until `switch.clorinatore` genuinely reads off, not merely
+until it has been told to); the override sets `actuate=True` while the plain
+freeze leaves it False; a frozen mode that never froze still drives nothing.
+
+### A §9 open item that just became load-bearing
+
+`binary_sensor.pool_pompa_in_marcia` requires flow >= `input_number.pool_portata_minima`
+(1 m³/h). **Nobody has measured the flow at 30 %.** If it is below 1 m³/h the
+sensor reads OFF while the pump is genuinely running. The integration survives
+that — nothing in the antifreeze path needs the confirmation, the PdC is blocked
+and the cell is off anyway — but `automation.pool_allerta_pompa_ferma_da_24h`
+will cry wolf through every cold snap. Measure it at the first cold weather and
+either tune `pool_portata_minima` or raise `number.pool_antifreeze_speed`
+(it is tunable 30-80 precisely for this).
+
+### What to watch on the first freezing night
+
+1. **`binary_sensor.pool_antifreeze` goes on below 0 and off at +2**, not at
+   +0.1. One push each way.
+2. **The cell is cut BEFORE the speed drops.** In the log:
+   `WRITE switch.turn_off ... clorinatore`, then `Holding off on the pump speed`
+   until the relay reads off, then `WRITE number.set_value ... 30.0`. If the
+   speed goes first, stop and revert.
+3. **The episode ends.** When the air passes +2, `WRITE switch.turn_off` for the
+   pump — including in `closed` mode. This is defect 1 above; it is the one
+   worth checking by hand.
+4. **`automation.pool_allerta_pompa_ferma_da_24h` does not fire** while the pump
+   runs at 30 %. If it does, that is the §9 flow item, not the supervisor.
+
+### Kickstart prompt for the next session
+
+> Read `CLAUDE.md` then `STORY_POOL_CONTROLLER.md`. v0.1.0-v0.4.0 are built but
+> **never deployed and never dry-run** — that is now the whole critical path,
+> not a formality. Deploy, follow "Before turning the dry run off" in
+> `CLAUDE.md`, and record the result under "Dry-run result" below. Then STORY
+> §8 step 5: dashboard cards on `pool-overview-v2` (never `pool-overview`) plus
+> the owner manual, villa-hvac style. The owner still owes answers on: the cover
+> sensor entity id, §5.4's daytime GRID top-up (`switch.pool_grid_day_topup`,
+> still PROPOSED), and the SOLAR target's lack of hysteresis. Measure the pump
+> flow at 30 % before winter (§9) — it decides whether `pool_portata_minima`
+> needs tuning.
+
+---
+
 ## v0.3.0 — the PdC state machine actuates (2026-09-17) — NOT YET DEPLOYED
 
 STORY §8 step 3. The law is again unchanged; `PDC_ACTUATION_IMPLEMENTED` flips
@@ -75,7 +175,7 @@ first evening.
 5. **Phase A energy** over the night against `sensor.pool_cop_stimato` — §8
    step 3 asks for the first real GRID night observed with it.
 
-### Kickstart prompt for the next session
+### Kickstart prompt (v0.3.0 -> v0.4.0) — DONE, this is what v0.4.0 did
 
 > Read `CLAUDE.md` then `STORY_POOL_CONTROLLER.md`. v0.2.0 and v0.3.0 are
 > built but **not deployed and never dry-run** — do that first (see "Before
