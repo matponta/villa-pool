@@ -8,7 +8,7 @@ shape actually breaks.
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import time, timedelta
+from datetime import UTC, datetime, time, timedelta
 
 import pytest
 
@@ -434,3 +434,73 @@ class TestAdversarialRegressions:
             prev = dec.pdc_state
             water += 0.08 if dec.pdc_state == PDC_GRID else -0.015
         assert starts <= 3, f"{starts} compressor starts in one night"
+
+
+# --- daylight saving ---------------------------------------------------------
+
+class TestDaylightSaving:
+    """Every timer is measured against the UTC anchor, never local time.
+
+    Europe/Rome springs forward on Sunday 2026-03-29: local 02:00 CET becomes
+    03:00 CEST. Read in local time a stamp from 01:55 looks 70 minutes old at
+    03:05 — when ten real minutes have passed. MIN_OFF is 15 minutes, so a
+    local-time comparison hands the compressor a restart it has not earned, and
+    the autumn transition does the mirror image: an hour where nothing can
+    elapse at all. Once a year each, and invisible in a dry run.
+    """
+
+    # 01:55 CET and 03:05 CEST — ten real minutes apart, 70 local ones.
+    BEFORE_LOCAL = datetime(2026, 3, 29, 1, 55)
+    BEFORE_UTC = datetime(2026, 3, 29, 0, 55, tzinfo=UTC)
+    AFTER_LOCAL = datetime(2026, 3, 29, 3, 5)
+    AFTER_UTC = datetime(2026, 3, 29, 1, 5, tzinfo=UTC)
+
+    def cold_night(self, now, utc_now=None):
+        """Inside the grid window, water below minimum, F3: GRID is due — and
+        the only thing standing between the pool and a restart is MIN_OFF."""
+        return state(now, utc_now=utc_now, water_temp=25.0, band=BAND_F3,
+                     headroom_w=0.0, grid_heating=True)
+
+    def test_min_off_survives_the_spring_forward(self):
+        mem = Memory(
+            pdc_state=PDC_OFF,
+            pdc_last_stop=self.BEFORE_UTC,
+            pump_running_since=self.BEFORE_UTC - 10 * MIN,
+        )
+        dec, _ = decide(self.cold_night(self.AFTER_LOCAL, self.AFTER_UTC), mem)
+        assert dec.pdc_state == PDC_OFF
+        assert "MIN_OFF" in dec.detail["pdc_reason"]
+
+    def test_the_same_stamps_in_local_time_would_have_restarted(self):
+        """Proof the anchor is load-bearing rather than decorative: drop it and
+        the identical situation authorises the start."""
+        mem = Memory(
+            pdc_state=PDC_OFF,
+            pdc_last_stop=self.BEFORE_LOCAL,
+            pump_running_since=self.BEFORE_LOCAL - 10 * MIN,
+        )
+        dec, _ = decide(self.cold_night(self.AFTER_LOCAL), mem)
+        assert dec.pdc_state == PDC_GRID
+
+    def test_the_autumn_fold_does_not_make_an_interval_negative(self):
+        """25/10: local 02:50 CEST, then local 02:10 CET twenty real minutes
+        later. In local time the pump confirmation is -40 minutes old."""
+        started_utc = datetime(2026, 10, 25, 0, 50, tzinfo=UTC)   # local 02:50 CEST
+        now_local = datetime(2026, 10, 25, 2, 10)                  # CET, second pass
+        now_utc = datetime(2026, 10, 25, 1, 10, tzinfo=UTC)
+        mem = Memory(pump_running_since=started_utc)
+        assert is_confirmed(mem, now_utc) is True
+        # Without the anchor the same 20 real minutes read as -40 and the pump
+        # would be treated as never confirmed, blocking the PdC all hour.
+        assert is_confirmed(
+            Memory(pump_running_since=datetime(2026, 10, 25, 2, 50)), now_local
+        ) is False
+
+    def test_windows_still_read_in_local_time(self):
+        """The anchor is for durations only. "23:00" means 23:00 in Italy, in
+        July and in January alike — a window compared in UTC would drift by an
+        hour twice a year, which is the bug in the other direction."""
+        anchor = datetime(2026, 3, 29, 21, 30, tzinfo=UTC)   # = 23:30 CEST
+        st = self.cold_night(at(2026, 3, 29, 23, 30), anchor)
+        dec, _ = decide(st, memory(anchor))
+        assert dec.pdc_state == PDC_GRID

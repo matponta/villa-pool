@@ -7,11 +7,11 @@ chlorinator state, and coordinates the three as one hydraulic system:
 filtration windows, a guaranteed minimum water temperature, solar-first
 heating, chlorination to a daily target, and winter antifreeze.
 
-> **Status: v0.1.0 — DRY RUN.** The integration writes **nothing**. There is no
-> actuation code path in this version at all: it decides every 60 s, logs what
-> it *would* do and why, and publishes that on
-> `sensor.pool_supervisor_reason`. Actuation lands in v0.2.0 (pump + chlorine)
-> and v0.3.0 (PdC).
+> **Status: v0.2.0 — the pump and the chlorinator are driven; the PdC is not.**
+> `switch.pool_dry_run` is **ON by default** and is what gates every write, so a
+> fresh install still only decides, reports and logs. Turning it off is the
+> owner's deliberate act and is announced in the log. The heat pump is still
+> untouched — that is v0.3.0.
 
 Target: Home Assistant **2026.8.3** (Python ≥ 3.14). Single instance,
 config-flow. Full engineering context lives in [`CLAUDE.md`](./CLAUDE.md); the
@@ -31,6 +31,15 @@ through a fixed priority ladder: maintenance/manual ▸ fault or no flow ▸ cov
 closed > 24 h ▸ antifreeze ▸ bathing ▸ solar ▸ grid ▸ targets/catch-up ▸ pump
 window.
 
+Commands are **idempotent**: a lever is written to only when the device
+disagrees with the decision, so a restart against a pool that is already doing
+the right thing sends nothing at all. A lever that does not adopt a command is
+re-asserted exactly once and then left alone — the supervisor keeps deciding and
+reporting, but stops arguing with whoever is moving it. Order inside a tick is
+hydraulic, not cosmetic: flow is never taken away before the things drawing
+through it, so the chlorinator is cut before the pump, and the pump is held on
+while the heat pump still reads as running.
+
 ## Installation (HACS)
 
 1. HACS → ⋮ → **Custom repositories** → add `https://github.com/matponta/villa-pool`,
@@ -39,7 +48,11 @@ window.
 3. **Settings → Devices & Services → Add Integration → Villa Pool.**
 4. Confirm the entity pickers. They are pre-filled with the verified inventory;
    leave **Cover closed** empty until that sensor exists.
-5. Assign the *Villa Pool* device to the **pool** area.
+5. Assign the *Pool* device to the **pool** area.
+6. Leave `switch.pool_dry_run` **on** for 24 h and compare the log with what
+   the pool actually did. Only then turn it off — and retire the two
+   chlorinator automations first (see `NEXT_SESSION.md`), or they and the
+   supervisor will take turns switching the cell.
 
 ## What it exposes
 
@@ -49,7 +62,8 @@ antifreeze band 0/+2 °C, chlorine and turnover targets, per-band prices) ·
 `time.*` (pump, PdC solar, PdC grid, chlorine windows, targets deadline, winter
 slot) · `select.pool_mode` (`auto | filtration_only | winter | manual | closed`)
 · `switch.*` (`dry_run` ON, `grid_heating` ON, `chlorine_target_control` ON,
-`maintenance` with a 4 h auto-off).
+`maintenance` with a 4 h auto-off — which *freezes* actuation, and does not
+switch the pool off).
 
 **Diagnostics** — `sensor.pool_supervisor_reason` (one line: why each actuator
 is where it is — read this first) · `sensor.pool_pdc_state` with `reason` /
@@ -57,6 +71,10 @@ is where it is — read this first) · `sensor.pool_pdc_state` with `reason` /
 `sensor.pool_costo_termico_stimato` (estimates only) ·
 `sensor.pool_chlorine_hours_missing` · `sensor.pool_volume_today` (with
 turnovers) · `sensor.pool_cover_closed_for` · `binary_sensor.pool_solar_ok`.
+
+`sensor.pool_supervisor_reason` also carries `writes`, `last_write` and
+`latched` — the levers the supervisor has stopped driving because something
+else kept moving them back. If the pool is not following, read `latched` first.
 
 ## Key verified facts
 
@@ -74,7 +92,7 @@ Measured live; do not re-derive them (see `CLAUDE.md`):
 
 ## Tests
 
-131 tests, all pure-fast except the end-to-end ones, which run against the exact
+182 tests, all pure-fast except the end-to-end ones, which run against the exact
 deploy-target HA.
 
 ```bash

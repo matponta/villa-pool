@@ -132,7 +132,9 @@ def pdc_step(
     Returns `(pdc_state, setpoint, reason, may_write, memory)`.
     """
     cfg = state.config
-    now = state.now
+    # Timers only. Every time-of-day question below goes through `state.now`
+    # inside `solar_conditions` / `grid_conditions` (see `model.PoolState`).
+    now = state.mono
     current = mem.pdc_state
 
     # --- the cloud-polling gap: freeze everything ----------------------------

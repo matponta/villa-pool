@@ -7,6 +7,15 @@ without a running HA.
 
 `now` is carried ON the state rather than read from a clock, so tests pin time by
 passing it (and `freeze_time` only has to drive the HA-facing layer).
+
+**Two clocks, deliberately.** `now` is naive LOCAL time and answers only
+"where are we in the day" — windows, the deadline, the winter slot. `utc_now`
+is the same instant in UTC and is what every *duration* is measured against
+(MIN_ON, MIN_OFF, the 60 s pump confirmation, the solar dwells, the post-run).
+Mixing the two is not academic here: across the October DST transition the
+local hour 02:00-03:00 happens twice, so a local-time `now - since` goes
+negative for that hour once a year and a timer silently re-arms. Harmless while
+the integration was dry; not harmless once it writes.
 """
 from __future__ import annotations
 
@@ -72,6 +81,13 @@ class PoolState:
     config: PoolConfig
     mode: str
 
+    # The same instant as `now`, in UTC. ALL duration arithmetic uses this via
+    # `.mono`; `now` is for time-of-day only. None means "no separate UTC
+    # anchor was supplied" — `.mono` then falls back to `now`, which is what
+    # the pure tests want (one frame, no DST in sight) and never what the
+    # engine does.
+    utc_now: datetime | None = None
+
     # --- temperatures ---------------------------------------------------------
     water_temp: float | None = None
     outdoor_temp: float | None = None
@@ -113,9 +129,25 @@ class PoolState:
     chlorine_target_control: bool = True
     volume_today_m3: float = 0.0
 
+    @property
+    def mono(self) -> datetime:
+        """The anchor every duration in this package is measured against.
+
+        UTC when the caller supplied one, otherwise `now`. Never used for
+        windows or any other time-of-day question — see the module docstring.
+        """
+        return self.utc_now if self.utc_now is not None else self.now
+
     def with_now(self, now: datetime) -> "PoolState":
-        """A copy advanced to `now` (test convenience)."""
-        return replace(self, now=now)
+        """A copy advanced to `now` (test convenience).
+
+        The UTC anchor moves by the same delta, so a replayed sequence of ticks
+        keeps its two clocks consistent.
+        """
+        utc_now = (
+            self.utc_now + (now - self.now) if self.utc_now is not None else None
+        )
+        return replace(self, now=now, utc_now=utc_now)
 
 
 @dataclass(frozen=True)
@@ -143,8 +175,9 @@ class Memory:
 class Decision:
     """What the supervisor intends this tick.
 
-    In v0.1.0 nothing here is written: the engine logs each intent at INFO with
-    its reason and publishes `reason` on `sensor.pool_supervisor_reason`.
+    The engine turns this into service calls (`actuator.py`) when
+    `switch.pool_dry_run` is off, and into log lines when it is on. `reason` is
+    published on `sensor.pool_supervisor_reason` either way.
     """
 
     pump_on: bool = False
@@ -158,6 +191,14 @@ class Decision:
     requesters: tuple[str, ...] = ()
     # Set when the priority ladder stopped at an interlock (STORY §5.5).
     blocked_reason: str | None = None
+    # False = do not touch ANY lever this tick. Set only by rung 1 of the
+    # ladder (maintenance / mode manual / mode closed), where the STORY word is
+    # "freezes all actuation" — which is not the same instruction as "turn
+    # everything off". `pump_on=False` in a frozen decision means "we are not
+    # asking for the pump", not "switch the pump off"; an actuator that failed
+    # to tell those apart would stop the pool the moment the owner flipped
+    # maintenance to work on it.
+    actuate: bool = True
     # False = the engine must not touch the PdC this tick at all. Set while the
     # cloud-polled climate is unavailable/unknown: "no new information" is not a
     # state change, and a write into a polling gap is how you get a double start

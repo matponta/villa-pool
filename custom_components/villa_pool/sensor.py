@@ -126,8 +126,19 @@ class SupervisorReasonSensor(PoolSensorBase):
             "requesters": list(decision.requesters),
             "blocked_reason": decision.blocked_reason,
             "pdc_write_allowed": decision.pdc_write,
+            # What the supervisor has actually SENT, as opposed to what it
+            # wants. `latched` is the one an owner needs when the pool is not
+            # following: it names the levers the supervisor has stopped
+            # driving because something else kept moving them back.
+            **self._actuation(),
             **decision.detail,
         }
+
+    def _actuation(self) -> dict:
+        actuator = getattr(self._engine, "actuator", None)
+        if actuator is None:
+            return {"writes": 0, "last_write": None, "latched": []}
+        return actuator.diagnostics()
 
 
 class PdcStateSensor(PoolSensorBase):

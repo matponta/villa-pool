@@ -1,23 +1,22 @@
-"""The supervisor engine: one tick, one decision, zero writes (v0.1.0).
+"""The supervisor engine: one tick, one decision, and now the writes.
 
-**v0.1.0 is DRY-RUN ONLY.** There is no write path in this file — not one
-gated by a flag, not one behind a branch: the code that would call
-`switch.turn_on` or `climate.set_hvac_mode` does not exist yet. That is
-deliberate. The owner's §8 step 1 is "no actuation, log intended writes only,
-run 24 h dry, compare logs with reality", and the cheapest way to guarantee
-that is for the capability to be absent rather than merely disabled.
+Every 60 s the engine:
+  * builds a `PoolState` from the coordinator's reads plus the setting entities,
+  * runs the pure `decide()`,
+  * logs at INFO — on CHANGE, not every tick — what it intends and why,
+  * publishes the reason and the decision for the diagnostic sensors,
+  * and hands the decision to the `Actuator`.
 
-`switch.pool_dry_run` (ON by default) is therefore a *declaration*, not a
-gate: while it is on the engine says what it would do; turning it off in this
-version logs a loud warning that actuation lands in v0.2.0 and still writes
-nothing. `ACTUATION_IMPLEMENTED` below is the single flag a future release
-flips, and the tests pin that it is False here.
+**`switch.pool_dry_run` is the gate, and it is ON by default.** While it is on
+the actuator compares intent against the real devices and logs the difference
+without calling anything, so the 24 h dry run's claim — "`villa_pool` appears
+nowhere in the pool's logbook" — stays literally true. Turning it off is the
+owner's deliberate act and is logged loudly on the transition.
 
-What the engine does do every 60 s:
-  * build a `PoolState` from the coordinator's reads plus the setting entities,
-  * run the pure `decide()`,
-  * log at INFO — on CHANGE, not every tick — what it would have done and why,
-  * publish the reason and the decision for the diagnostic sensors.
+`ACTUATION_IMPLEMENTED` records that a write path exists at all. It was False
+through v0.1.0, where the capability was *absent* rather than disabled; v0.2.0
+wired the pump and the chlorinator and v0.3.0 the PdC, and which levers are
+live is `actuator.PDC_ACTUATION_IMPLEMENTED` rather than anything here.
 """
 from __future__ import annotations
 
@@ -29,6 +28,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.util import dt as dt_util
 
+from .actuator import Actuator
 from .const import (
     DEFAULT_ANTIFREEZE_OFF_C,
     DEFAULT_ANTIFREEZE_ON_C,
@@ -71,8 +71,8 @@ from .supervisor import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# The single switch a future release flips. v0.1.0: False, and pinned by a test.
-ACTUATION_IMPLEMENTED = False
+# There is a write path in this component. False through v0.1.0.
+ACTUATION_IMPLEMENTED = True
 
 
 def _parse_time(value: str) -> time:
@@ -94,6 +94,8 @@ class SupervisorEngine:
         self._restored = False
         self._unsub = None
         self._stopped = False
+        self._was_live: bool | None = None
+        self.actuator = Actuator(hass, entry, coordinator)
         # Entities that display the decision subscribe here. The coordinator's
         # own listeners fire BEFORE this engine's background tick completes, so
         # a sensor driven by the coordinator alone would always publish the
@@ -198,12 +200,13 @@ class SupervisorEngine:
             ),
         )
 
-    def _build_state(self, now: datetime) -> PoolState:
+    def _build_state(self, now: datetime, utc_now: datetime) -> PoolState:
         data = self.coordinator.data or {}
         v = self._entity_value
         air = data.get("pdc_air_temp")
         return PoolState(
             now=now,
+            utc_now=utc_now,
             config=self._build_config(),
             mode=str(v("mode", MODE_AUTO)),
             water_temp=data.get("water_temp"),
@@ -252,8 +255,11 @@ class SupervisorEngine:
         async with self._lock:
             if self._stopped:
                 return
+            # Two clocks. Local-naive for the windows (every STORY §3 window
+            # is wall-clock: "23:00" means 23:00 in Italy, in July and in
+            # January alike), UTC for every timer. See `model.PoolState`.
             now = dt_util.now().replace(tzinfo=None)
-            state = self._build_state(now)
+            state = self._build_state(now, dt_util.utcnow())
             if not self._restored:
                 self.memory = self._restore(state)
                 self._restored = True
@@ -262,22 +268,42 @@ class SupervisorEngine:
             self.last_state = state
             self._log_intent(decision)
             self._notify()
-            if not self._dry_run() and not ACTUATION_IMPLEMENTED:
-                _LOGGER.warning(
-                    "switch.pool_dry_run is OFF, but v0.1.0 has no actuation path "
-                    "at all — still writing nothing. Actuation lands in v0.2.0 "
-                    "(pump + chlorine) and v0.3.0 (PdC)."
-                )
+            live = self._announce_mode()
+            await self.actuator.async_apply(decision, state.mono, live=live)
 
     def _dry_run(self) -> bool:
         return bool(self._entity_value("dry_run", True))
+
+    def _announce_mode(self) -> bool:
+        """Say it out loud the first time, and on every change after that.
+
+        Going live is the single most consequential thing the owner can do to
+        this integration, and "when did it start writing?" must be answerable
+        from the log alone rather than from the switch's current position.
+        """
+        live = not self._dry_run()
+        if live == self._was_live:
+            return live
+        self._was_live = live
+        self.actuator.reset()
+        if live:
+            _LOGGER.warning(
+                "switch.pool_dry_run is OFF — the supervisor is now WRITING to "
+                "the pool. Every command is logged at INFO with its reason."
+            )
+        else:
+            _LOGGER.info(
+                "switch.pool_dry_run is ON — the supervisor decides and reports "
+                "but writes nothing."
+            )
+        return live
 
     def _restore(self, state: PoolState) -> Memory:
         """Re-derive the latches on the first tick after a (re)start (§7.10)."""
         data = self.coordinator.data or {}
         w = state.config.windows
         return restore_memory(
-            now=state.now,
+            mono=state.mono,
             pdc_running=data.get("pdc_running"),
             pump_running=data.get("pump_running"),
             water_temp=state.water_temp,
@@ -296,6 +322,12 @@ class SupervisorEngine:
         Per-tick logging would be 1440 lines a day and unreadable; the owner is
         comparing intent against what the pool actually did, so the interesting
         events are the transitions. The reason is always carried with them.
+
+        This is the *decision*, which is not the same thing as a command: the
+        actuator logs `WRITE` (or `DRY-RUN would set`) separately, and the two
+        differ in both directions — an intent can change with nothing to send
+        because the pool is already there, and a command can be sent with no
+        change of intent because the device drifted away from it.
         """
         fingerprint = (
             decision.pump_on,
@@ -309,7 +341,7 @@ class SupervisorEngine:
         previous, self._last_logged = self._last_logged, fingerprint
         if previous is None:
             _LOGGER.info(
-                "DRY-RUN baseline: pump=%s@%s pdc=%s@%s chlorine=%s — %s",
+                "INTENT baseline: pump=%s@%s pdc=%s@%s chlorine=%s — %s",
                 "on" if decision.pump_on else "off", decision.pump_speed,
                 decision.pdc_state, decision.pdc_setpoint,
                 "on" if decision.chlorine_on else "off", decision.reason,
@@ -322,7 +354,7 @@ class SupervisorEngine:
         ):
             if before != after:
                 _LOGGER.info(
-                    "DRY-RUN would set %s: %s -> %s — %s",
+                    "INTENT %s: %s -> %s — %s",
                     label, before, after, decision.reason,
                 )
 

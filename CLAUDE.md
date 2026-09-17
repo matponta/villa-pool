@@ -24,30 +24,58 @@ skeleton and conventions and shares nothing at runtime.**
 Target: Home Assistant **2026.8.3** (Python ≥ 3.14). Single instance,
 config-flow hub.
 
-## Status: v0.1.0 — DRY RUN. The integration writes nothing.
+## Status: v0.2.0 — the pump and the chlorinator are driven. The PdC is not.
 
-This is the most important fact in the repo and the easiest one to break.
+**`switch.pool_dry_run` is the gate, it is ON by default, and it is now real.**
+Through v0.1.0 there was no write path at all and the switch was only a
+declaration; from v0.2.0 it is what decides whether a tick's decision becomes
+service calls. A fresh install or an upgrade therefore still writes nothing
+until the owner turns it off, which is logged at WARNING on the transition.
 
-`engine.py` contains **no write path at all** — not a disabled one, not one
-behind a flag. There is no `hass.services.async_call` anywhere in
-`custom_components/villa_pool/`. `switch.pool_dry_run` (ON by default) is a
-*declaration* of that, not the gate enforcing it; turning it off logs a loud
-warning and still writes nothing. `ACTUATION_IMPLEMENTED = False` in `engine.py`
-is the single flag a future release flips, and
-`tests/test_engine.py::test_v0_1_0_has_no_actuation_path` pins it.
-
-Six parametrised tests assert that no `switch.turn_on/off`,
-`climate.set_hvac_mode/set_temperature`, `number.set_value` or
-`select.select_option` call is ever made, under conditions that would want all
-of them. Keep those tests passing until §8 step 2 deliberately changes them.
+- `ACTUATION_IMPLEMENTED` in `engine.py` — a write path exists (True from
+  v0.2.0). Historical marker; it no longer gates anything.
+- `PDC_ACTUATION_IMPLEMENTED` in `actuator.py` — **False in v0.2.0**: the
+  climate levers are not built at all, so §8 step 2's "leaving the PdC
+  untouched" is structural rather than a promise. v0.3.0 flips it.
+- `tests/test_engine.py::test_dry_run_calls_nothing` keeps the v0.1.0 guarantee
+  for the DEFAULT configuration, across all six services.
 
 **Interpretation note.** §8 step 1 says "v0.1.0 with no actuation" and §8 steps
 2-3 put the pump/chlorine and PdC supervisors in v0.2.0/v0.3.0 — but step 1 also
 requires "log intended writes only ... run 24 h dry, compare logs with reality",
 which is only meaningful if the controller is already *deciding*. So the **full
-pure control law ships in v0.1.0** and only actuation is deferred. v0.2.0 and
-v0.3.0 therefore become "wire the writes for these levers + retire the old
+pure control law shipped in v0.1.0** and only actuation was deferred. v0.2.0 and
+v0.3.0 are therefore "wire the writes for these levers + retire the old
 automations", not "write the law".
+
+### How a write happens
+
+`law.decide()` says what the pool should be doing. `supervisor/actuation.py`
+(pure) answers, per lever, whether to send a command about it; `actuator.py`
+owns the entity ids, the services, the order and the logging. Four rules:
+
+1. **Idempotent** — a lever is written only when the device disagrees. The
+   agreement check comes *before* the "is this a new intent" check, which is
+   what makes a restart against an already-correct pool send nothing.
+2. **Re-assert once, then stop** — a disagreement inside the settle window is
+   patience (the tuya bridge and the aquatemp cloud both lag); after it, one
+   more command, and then the lever is latched and left alone. The latch clears
+   by itself when our intent changes or the device comes back. It is never
+   called "manual" in a message, because a human and an unresponsive device
+   leave identical evidence.
+3. **A read gap is not evidence** — an `unavailable` lever is neither written
+   to nor held responsible, the same rule the PdC has had since v0.1.0.
+4. **Order inside a tick is hydraulic** — PdC off ▸ chlorine off ▸ pump off on
+   the way down; pump ▸ PdC ▸ chlorine on the way up. Two guards back that up
+   when a command has not landed yet: the speed is never dropped below 80 %
+   while `switch.clorinatore` still reads on (§6), and the pump is never
+   stopped while `binary_sensor.pool_pdc_acceso` still reads on. Both defer
+   rather than cancel, and both fail towards *more* flow.
+
+`switch.pool_maintenance` and the `manual`/`closed` modes set
+`Decision.actuate=False`, which means **hands off every lever** — not "write
+everything off". Freezing is what §4 asks for, and stopping the pump under an
+owner who flipped maintenance to work on the pool is the opposite of it.
 
 ## Architecture
 
@@ -71,10 +99,15 @@ law decides → engine reports. No module skips a step.
   `solar` (hysteresis + entry dwell) · `pdc` (the 4-state machine) · `chlorine`
   (enable-to-target) · `pump` (demand collection + sequencing) · `cop`
   (diagnostic model) · `law` (`decide()` + the §5.5 ladder + `restore_memory`) ·
-  `model` (the data carriers).
+  `actuation` (should this lever be commanded at all) · `model` (the data
+  carriers).
 - `engine.py` — builds `PoolState`, runs `decide()`, logs intent **on change**
-  at INFO, notifies the diagnostic entities. One `asyncio.Lock` serialises the
-  scheduled tick and any awaited `request_run`.
+  at INFO, notifies the diagnostic entities, then hands the decision to the
+  actuator. One `asyncio.Lock` serialises the scheduled tick and any awaited
+  `request_run`.
+- `actuator.py` — the HA half of the write path (levers, services, order,
+  notifications). Writes are bounded by `WRITE_TIMEOUT_S`: a cloud lever that
+  never answers must not hold the engine's lock and make the supervisor deaf.
 - `entity.py` / `number.py` / `time.py` / `select.py` / `switch.py` — the
   settings, as the integration's own restoring entities (§4). Each publishes
   into `runtime_data.settings`, which is what the engine reads.
@@ -91,6 +124,22 @@ prefix comes from the **device name**, so the device is called `Pool` (not
 hence terse labels like "Solar on w" and "Min temp". Renaming the device would
 silently rename all 36 entities. Pinned by
 `tests/test_engine.py::test_story_section_4_entity_ids`.
+
+### Two clocks, and why
+
+`PoolState.now` is naive **local** time and answers only "where in the day are
+we" — the §3 windows, the deadline, the winter slot. `PoolState.mono` is the
+same instant in **UTC** and is what every *duration* is measured against
+(MIN_ON, MIN_OFF, the 60 s pump confirmation, the solar dwells, the post-run,
+the settle windows). Everything in `Memory` is stamped in the UTC frame.
+
+This is not tidiness. Across the March transition local time jumps an hour
+forward, so a stamp from 01:55 reads as 70 minutes old at 03:05 when ten real
+minutes have passed — and MIN_OFF is fifteen, so the compressor gets a restart
+it has not earned. October does the mirror image: an hour in which nothing can
+elapse at all. Once a year each, invisible in a dry run, and pinned by
+`tests/test_supervisor.py::TestDaylightSaving` — including a test that shows
+the same situation restarting the machine when the anchor is dropped.
 
 ### Two ordering facts that are load-bearing
 
@@ -121,6 +170,14 @@ silently rename all 36 entities. Pinned by
   the PUN index changes monthly.
 - **Do not turn the pump off on unload.** Release nothing destructive; just stop
   deciding (§6). Pinned by `test_unload_releases_nothing_destructive`.
+- **Do not test writes with `async_mock_service` for `switch`/`number`/
+  `select`.** It replaces the domain's service handler, and those components
+  register their own when the integration forwards its platforms — so the mock
+  is silently overwritten and a "nothing was written" assertion passes because
+  nothing was listening. `tests/test_engine.py::record_calls` listens on
+  `EVENT_CALL_SERVICE` instead, which observes the real call and cannot be
+  overwritten. (The v0.1.0 dry-run tests were weaker than they looked for
+  exactly this reason.)
 - **On restart, re-derive the PdC state** from `pool_pdc_acceso` + water temp;
   do not assume OFF. `restore_memory` also adopts a pump that is already in
   marcia — the 60 s debounce filters a *fresh transition*, and is not a reason
@@ -191,6 +248,26 @@ These are recorded rather than silently resolved:
   each release. Write the *verification* result, not just the intent.
 - Keep `CLAUDE.md` current in the same PR as the behaviour it documents.
 
+## Before turning `switch.pool_dry_run` off
+
+These are HA-side steps, not code, and none of them has been done from here —
+retiring a live automation while the pool has no other chlorination control
+would leave the cell unmanaged, so it waits for the owner.
+
+1. **Retire `automation.pool_chlorinator_daily_3h_run` (12:00, 6 h) and
+   `automation.pool_chlorinator_follows_pool_in_use`** (STORY §2, §8 step 2).
+   Both write `switch.clorinatore`. Left enabled they and the supervisor take
+   turns on the relay, and the supervisor will read the disagreement as a
+   manual override and latch the lever — correctly, and uselessly.
+2. **Keep every `pool_allerta_*`** automation and
+   `automation.pool_chlorinator_safety_cutoff_on_low_circulation`. They are the
+   owner's independent watchdogs and are deliberately outside this integration.
+   The cutoff never fights the supervisor: when flow is lost the law wants the
+   cell off too.
+3. **Confirm `automation.pool_test_cop_notturno` is disabled** (§6) — the
+   integration must not fight a running one-shot.
+4. Run 24 h dry first and compare the log with the pool's real logbook.
+
 ## Before the next step
 
 - **The cover sensor entity id is still unknown.** `binary_sensor.pool_telo_chiuso`
@@ -199,3 +276,5 @@ These are recorded rather than silently resolved:
   alert. Until then every cover rule is inert by construction.
 - Check `automation.pool_test_cop_notturno` is disabled before any actuating
   release — the integration must not fight a running one-shot (§6).
+- **§5.4's daytime GRID top-up is still PROPOSED** and unimplemented;
+  `switch.pool_grid_day_topup` does not exist. Owner to confirm.
