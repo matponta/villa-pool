@@ -47,11 +47,14 @@ from .const import (
     CONF_PUMP_SPEED,
     CONF_PUMP_SWITCH,
     NOTIFIABLE_BLOCKS,
+    PDC_GRID,
+    PDC_SOLAR,
     PUMP_MODE_MANUAL,
     PUMP_SPEED_TOLERANCE,
     SETPOINT_TOLERANCE,
     SETTLE_LOCAL_S,
-    SETTLE_PDC_S,
+    SETTLE_PDC_MODE_S,
+    SETTLE_PDC_SETPOINT_S,
     WRITE_ATTEMPTS,
     WRITE_TIMEOUT_S,
 )
@@ -66,11 +69,10 @@ LEVER_PUMP_MODE = "pump_mode"
 LEVER_PUMP_SPEED = "pump_speed"
 LEVER_PUMP = "pump"
 
-# v0.2.0 wires the pump and the chlorinator only; the PdC levers land in v0.3.0
-# (STORY §8 steps 2 and 3). Kept as a flag rather than as absent code because
-# the pure planner and the ordering are shared, and a half-present write path is
-# the thing the v0.1.0 note warned against — so this is pinned by a test too.
-PDC_ACTUATION_IMPLEMENTED = False
+# v0.2.0 wired the pump and the chlorinator; v0.3.0 adds the PdC (STORY §8 steps
+# 2 and 3). Kept as a flag rather than as absent code because the pure planner
+# and the hydraulic ordering are shared between them.
+PDC_ACTUATION_IMPLEMENTED = True
 
 ON = "on"
 OFF = "off"
@@ -195,15 +197,13 @@ class Actuator:
         else:
             self._defer("pump", None)
 
-        pdc = self._pdc_targets(decision)
-        stopping_pdc = [t for t in pdc if t.desired == HVAC_OFF]
-        starting_pdc = [t for t in pdc if t.desired != HVAC_OFF]
+        stopping_pdc, starting_pdc = self._pdc_targets(decision)
 
         chlorine = Target(
             LEVER_CHLORINE,
             self._entity(CONF_CHLORINATOR_SWITCH),
             chlorine_desired,
-            self._state(CONF_CHLORINATOR_SWITCH),
+            chlorine_actual,
             label="chlorinator",
         )
         pump_block = [
@@ -222,39 +222,53 @@ class Actuator:
             return [*stopping_pdc, *pump_block, *starting_pdc, chlorine]
         return [*stopping_pdc, chlorine, *pump_block, *starting_pdc]
 
-    def _pdc_targets(self, decision: Decision) -> list[Target]:
-        """The climate levers, or nothing at all.
+    def _pdc_targets(
+        self, decision: Decision
+    ) -> tuple[list[Target], list[Target]]:
+        """The climate levers, split into (stop first, start last).
 
-        Nothing at all in three cases: the release has not wired them yet, the
+        Nothing at all in three cases: the release has not wired them, the
         cloud-polled entity is mid-gap (`pdc_write` false — a write into a
         polling gap is how a machine that never stopped gets started twice,
         §5.2/§7.9), or no climate entity is configured.
+
+        HA writes only `hvac_mode` and the setpoint; the machine's own
+        thermostat does the rest (§5.2). `blocked` and `off` both mean `off`
+        here — the difference between them is a reason, not a command.
         """
         if not PDC_ACTUATION_IMPLEMENTED or not decision.pdc_write:
-            return []
+            return [], []
         entity_id = self._entity(CONF_PDC_CLIMATE)
         if not entity_id:
-            return []
-        running = decision.pdc_setpoint is not None and decision.pdc_state in (
-            "solar", "grid"
+            return [], []
+        heating = (
+            decision.pdc_state in (PDC_SOLAR, PDC_GRID)
+            and decision.pdc_setpoint is not None
         )
         mode = Target(
             LEVER_PDC_MODE, entity_id,
-            HVAC_HEAT if running else HVAC_OFF,
+            HVAC_HEAT if heating else HVAC_OFF,
             self._state(CONF_PDC_CLIMATE),
-            settle_s=SETTLE_PDC_S, label="PdC mode",
+            settle_s=SETTLE_PDC_MODE_S, label="PdC mode",
         )
-        if not running:
-            return [mode]
+        # The setpoint target is built even when we are not heating, with no
+        # opinion, so its lever is CLEARED rather than left holding the last
+        # run's value and attempt count. A lever carrying `writes=2` from
+        # yesterday would latch itself on the first disagreement tonight.
         setpoint = Target(
-            LEVER_PDC_SETPOINT, entity_id, decision.pdc_setpoint,
+            LEVER_PDC_SETPOINT, entity_id,
+            decision.pdc_setpoint if heating else None,
             self._attribute(CONF_PDC_CLIMATE, "temperature"),
-            settle_s=SETTLE_PDC_S, tolerance=SETPOINT_TOLERANCE,
+            settle_s=SETTLE_PDC_SETPOINT_S, tolerance=SETPOINT_TOLERANCE,
             label="PdC setpoint",
         )
-        # Setpoint first, then `heat`: the machine should never start against
-        # yesterday's target and then be corrected a second later.
-        return [setpoint, mode]
+        if heating:
+            # Setpoint before `heat`, so the machine never starts against the
+            # target of whatever ran last. If the controller refuses a target
+            # while it is off, the setpoint lever corrects itself 10 min later
+            # rather than riding the mode lever's full compressor grace.
+            return [], [setpoint, mode]
+        return [mode, setpoint], []
 
     # --- the tick ------------------------------------------------------------
 
@@ -281,6 +295,13 @@ class Actuator:
     async def _apply_one(
         self, target: Target, decision: Decision, mono: datetime
     ) -> None:
+        # A picker the owner cleared is a lever we do not have. Skipping before
+        # the planner runs keeps its memory empty, so it cannot accumulate
+        # attempts and then announce that it has given up on an entity that
+        # never existed.
+        if not target.entity_id:
+            self._levers.pop(target.key, None)
+            return
         lever = self._levers.get(target.key, Lever())
         verdict, lever = plan(
             lever,
@@ -316,8 +337,6 @@ class Actuator:
                 target.label, target.entity_id,
             )
         if verdict.action != WRITE:
-            return
-        if not target.entity_id:
             return
 
         domain, service, data = _service_for(
@@ -403,6 +422,13 @@ class Actuator:
         if not target or "." not in target:
             return
         domain, _, service = target.partition(".")
+        if not self.hass.services.has_service(domain, service):
+            # A renamed or removed notifier is worth one line, not a traceback
+            # on every block for the rest of the day.
+            self._defer(
+                "notifications", f"{target} is not a service on this system"
+            )
+            return
         try:
             await self.hass.services.async_call(
                 domain, service,
@@ -450,6 +476,12 @@ class Actuator:
             "writes": self.writes,
             "last_write": self.last_write,
             "latched": self.latched,
+            # Levers the supervisor wants to move but is holding back for a
+            # hydraulic reason. `pump` sitting here is how a stuck
+            # `pool_pdc_acceso` would show itself: the guard fails towards
+            # keeping flow and never times out, so it has to be VISIBLE rather
+            # than merely safe.
+            "holding": sorted(self._deferred),
         }
 
 

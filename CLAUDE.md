@@ -24,7 +24,7 @@ skeleton and conventions and shares nothing at runtime.**
 Target: Home Assistant **2026.8.3** (Python ≥ 3.14). Single instance,
 config-flow hub.
 
-## Status: v0.2.0 — the pump and the chlorinator are driven. The PdC is not.
+## Status: v0.3.0 — the pump, the chlorinator and the PdC are all driven.
 
 **`switch.pool_dry_run` is the gate, it is ON by default, and it is now real.**
 Through v0.1.0 there was no write path at all and the switch was only a
@@ -34,9 +34,9 @@ until the owner turns it off, which is logged at WARNING on the transition.
 
 - `ACTUATION_IMPLEMENTED` in `engine.py` — a write path exists (True from
   v0.2.0). Historical marker; it no longer gates anything.
-- `PDC_ACTUATION_IMPLEMENTED` in `actuator.py` — **False in v0.2.0**: the
-  climate levers are not built at all, so §8 step 2's "leaving the PdC
-  untouched" is structural rather than a promise. v0.3.0 flips it.
+- `PDC_ACTUATION_IMPLEMENTED` in `actuator.py` — True from v0.3.0. It was False
+  in v0.2.0 and the climate levers were not built at all, which is how §8 step
+  2's "leaving the PdC untouched" was made structural rather than a promise.
 - `tests/test_engine.py::test_dry_run_calls_nothing` keeps the v0.1.0 guarantee
   for the DEFAULT configuration, across all six services.
 
@@ -71,6 +71,35 @@ owns the entity ids, the services, the order and the logging. Four rules:
    while `switch.clorinatore` still reads on (§6), and the pump is never
    stopped while `binary_sensor.pool_pdc_acceso` still reads on. Both defer
    rather than cancel, and both fail towards *more* flow.
+
+### The PdC is the lever that can be damaged by being asked twice
+
+It gets three protections the others do not:
+
+- **A polling gap is not information.** `decision.pdc_write` false (the climate
+  entity is `unavailable`/`unknown`) means the climate levers are not even
+  built this tick. No state change, no command. This is the single behaviour
+  the 24 h dry run was told to watch, because it is the one that would cause a
+  double compressor start.
+- **`hvac_mode` is rate-limited to once per compressor grace** (15 min =
+  MIN_OFF, STORY §6) — but only for a *repeat*. A change of mind is never rate
+  limited, which is what lets §7.5's "PdC `off` within one tick" hold even when
+  the grace has just started.
+- **The setpoint has a shorter grace** (10 min, the bottom of §5.2's range and
+  two cloud polls). It cycles nothing, and a controller that refuses a target
+  while it is off should not be left on the wrong one for a quarter of an hour.
+  It is written *before* `heat`, so the machine never starts against whatever
+  target ran last; if the attribute is unreadable it is not written blind.
+
+Replaying a September night offline gives 5 commands in 8 h for 2 heating runs,
+and a night of flickering `unavailable` gives exactly the same 5, at the same
+minutes. That replay is the check to re-run before any change to the machine or
+the planner — it is what caught the v0.1.0 short-cycle.
+
+**In `auto` mode the supervisor owns the machine.** If the owner starts the PdC
+by hand it will be commanded back off, twice, and then the lever latches and it
+is left alone. The intended escape hatches are `select.pool_mode = manual` and
+`switch.pool_maintenance`, not winning the argument.
 
 `switch.pool_maintenance` and the `manual`/`closed` modes set
 `Decision.actuate=False`, which means **hands off every lever** — not "write
