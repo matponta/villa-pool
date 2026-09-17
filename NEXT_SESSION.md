@@ -118,7 +118,10 @@ v0.5.0 is installed. Apply them after the upgrade.
 
 ---
 
-## v0.4.1 — dashboard cards + owner manual (2026-09-17)
+## Dashboard cards + owner manual (2026-09-17) — no version bump
+
+STORY §8 step 5. Documentation and dashboard only; it carried no change to
+`custom_components/`, so no release and no tag.
 
 STORY §8 step 5. Mostly delivery rather than code.
 
