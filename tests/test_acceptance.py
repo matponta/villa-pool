@@ -458,7 +458,7 @@ class TestCriterion10RestartDuringGrid:
         from custom_components.villa_pool.supervisor import restore_memory
 
         now = at(2026, 9, 17, 1, 0)
-        mem = restore_memory(now=now, pdc_running=True, pump_running=True,
+        mem = restore_memory(mono=now, pdc_running=True, pump_running=True,
                              water_temp=26.0,
                              min_temp=DEFAULT_MIN_TEMP, band=BAND_F3,
                              grid_heating=True, in_grid_window=True,
@@ -469,7 +469,7 @@ class TestCriterion10RestartDuringGrid:
         from custom_components.villa_pool.supervisor import restore_memory
 
         now = at(2026, 9, 17, 1, 0)
-        mem = restore_memory(now=now, pdc_running=False, pump_running=True,
+        mem = restore_memory(mono=now, pdc_running=False, pump_running=True,
                              water_temp=27.6,
                              min_temp=DEFAULT_MIN_TEMP, band=BAND_F3,
                              grid_heating=True, in_grid_window=True,
@@ -482,7 +482,7 @@ class TestCriterion10RestartDuringGrid:
         from custom_components.villa_pool.supervisor import restore_memory
 
         now = at(2026, 9, 17, 1, 0)
-        mem = restore_memory(now=now, pdc_running=True, pump_running=True,
+        mem = restore_memory(mono=now, pdc_running=True, pump_running=True,
                              water_temp=26.0,
                              min_temp=DEFAULT_MIN_TEMP, band=BAND_F3,
                              grid_heating=True, in_grid_window=True,
@@ -501,7 +501,7 @@ class TestCriterion10RestartDuringGrid:
         from custom_components.villa_pool.supervisor import restore_memory
 
         now = at(2026, 9, 17, 1, 0)
-        mem = restore_memory(now=now, pdc_running=running, water_temp=water,
+        mem = restore_memory(mono=now, pdc_running=running, water_temp=water,
                              min_temp=DEFAULT_MIN_TEMP, band=BAND_F3,
                              grid_heating=True, in_grid_window=True,
                              solar_ok=False)

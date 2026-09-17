@@ -11,7 +11,8 @@ from datetime import timedelta
 
 import pytest
 from freezegun import freeze_time
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_CALL_SERVICE
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -19,6 +20,7 @@ from pytest_homeassistant_custom_component.common import (
     async_mock_service,
 )
 
+from custom_components.villa_pool.actuator import PDC_ACTUATION_IMPLEMENTED
 from custom_components.villa_pool.const import (
     DEFAULT_CHLORINATOR_SWITCH,
     DEFAULT_PDC_CLIMATE,
@@ -46,6 +48,8 @@ async def setup_pool(hass: HomeAssistant, **states) -> MockConfigEntry:
         "binary_sensor.pompa_piscina_flow_pressure_warning": "off",
         "sensor.pompa_piscina_volume_flow_rate": "8",
         "sensor.pompa_piscina_power": "427",
+        "select.pompa_piscina_pump_mode": "Manual",
+        "number.pompa_piscina_manual_percentage_power": "80",
         DEFAULT_PDC_CLIMATE: "off",
         "binary_sensor.pool_pdc_acceso": "off",
         "binary_sensor.pool_pdc_guasto": "off",
@@ -84,6 +88,69 @@ async def tick(hass: HomeAssistant, times: int = 1, freezer=None) -> None:
             freezer.tick(TICK)
         async_fire_time_changed(hass, dt_util.utcnow() + TICK)
         await hass.async_block_till_done()
+
+
+async def go_live(hass: HomeAssistant) -> None:
+    """Turn `switch.pool_dry_run` off — the owner's deliberate act."""
+    await hass.services.async_call(
+        "switch", "turn_off", {"entity_id": "switch.pool_dry_run"}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+
+# Our OWN settings entities. A test flipping `switch.pool_dry_run` is
+# configuring the supervisor, not actuating the pool, and must not show up as a
+# write.
+OWN_PREFIXES = ("switch.pool_", "select.pool_mode", "number.pool_", "time.pool_")
+
+
+def record_calls(hass: HomeAssistant) -> list[dict]:
+    """Record every service call, without intercepting any of them.
+
+    NOT `async_mock_service`: that REPLACES the handler for a domain's service,
+    and `switch`, `number` and `select` all register their own handlers when
+    this integration forwards its platforms — silently overwriting the mock. A
+    "nothing was written" test built on it passes because nothing is listening,
+    not because nothing was called. A bus listener cannot be overwritten, and
+    it observes the real call rather than standing in for it.
+    """
+    calls: list[dict] = []
+
+    @callback
+    def _record(event) -> None:
+        calls.append(event.data)
+
+    hass.bus.async_listen(EVENT_CALL_SERVICE, _record)
+    return calls
+
+
+def _entities(call: dict) -> list[str]:
+    target = (call.get("service_data") or {}).get("entity_id")
+    if isinstance(target, str):
+        return [target]
+    return list(target or [])
+
+
+def writes(calls, domain: str | None = None, service: str | None = None) -> list[dict]:
+    """The recorded calls that actually moved something in the pool."""
+    out = []
+    for call in calls:
+        if domain and call["domain"] != domain:
+            continue
+        if service and call["service"] != service:
+            continue
+        if any(e.startswith(OWN_PREFIXES) for e in _entities(call)):
+            continue
+        out.append(call)
+    return out
+
+
+def entities_of(calls) -> list[str]:
+    """The entity ids a list of recorded calls targeted, in order."""
+    out: list[str] = []
+    for call in calls:
+        out.extend(_entities(call))
+    return out
 
 
 # --- loading -----------------------------------------------------------------
@@ -128,9 +195,10 @@ async def test_min_temp_default_is_27(hass: HomeAssistant) -> None:
 
 # --- the dry run really is dry ----------------------------------------------
 
-async def test_v0_1_0_has_no_actuation_path(hass: HomeAssistant) -> None:
-    """The capability is ABSENT, not merely disabled (see engine.py)."""
-    assert ACTUATION_IMPLEMENTED is False
+async def test_a_write_path_exists(hass: HomeAssistant) -> None:
+    """v0.1.0 had none at all; from v0.2.0 the capability is present and the
+    dry-run switch is what gates it."""
+    assert ACTUATION_IMPLEMENTED is True
 
 
 @pytest.mark.parametrize("domain,service", [
@@ -138,35 +206,383 @@ async def test_v0_1_0_has_no_actuation_path(hass: HomeAssistant) -> None:
     ("climate", "set_hvac_mode"), ("climate", "set_temperature"),
     ("number", "set_value"), ("select", "select_option"),
 ])
-async def test_no_service_calls_are_ever_made(
+async def test_dry_run_calls_nothing(
     hass: HomeAssistant, domain: str, service: str
 ) -> None:
-    """Whatever the pool is doing, v0.1.0 calls nothing on it."""
-    calls = async_mock_service(hass, domain, service)
+    """The DEFAULT configuration still writes nothing at all.
+
+    This is the v0.1.0 guarantee, kept: `switch.pool_dry_run` is on out of the
+    box, so installing or upgrading the integration never moves the pool until
+    the owner says so.
+    """
     await setup_pool(
         hass,
         **{
             DEFAULT_WATER_TEMP: "24.0",          # cold: would want heating
             "sensor.solar_headroom_for_heater": "4000",   # sunny: would want SOLAR
             "input_boolean.pool_in_use": "on",   # would want pump + chlorine
+            DEFAULT_PUMP_SWITCH: "off",          # and every lever disagrees
+            DEFAULT_CHLORINATOR_SWITCH: "off",
+            "number.pompa_piscina_manual_percentage_power": "30",
+            "select.pompa_piscina_pump_mode": "AI Flow",
         },
     )
+    async_mock_service(hass, "climate", "set_hvac_mode")
+    async_mock_service(hass, "climate", "set_temperature")
+    calls = record_calls(hass)
     await tick(hass, times=20)
-    assert calls == []
+    assert writes(calls, domain, service) == []
 
 
-async def test_turning_dry_run_off_still_writes_nothing(
+async def test_dry_run_still_says_what_it_would_have_written(
     hass: HomeAssistant, caplog
 ) -> None:
-    calls = async_mock_service(hass, "switch", "turn_on")
-    await setup_pool(hass, **{DEFAULT_WATER_TEMP: "24.0"})
-    await hass.services.async_call(
-        "switch", "turn_off",
-        {"entity_id": "switch.pool_dry_run"}, blocking=True,
+    import logging
+    caplog.set_level(logging.INFO)
+    await setup_pool(hass, **{
+        "input_boolean.pool_in_use": "on",
+        DEFAULT_CHLORINATOR_SWITCH: "off",
+    })
+    await tick(hass, times=2)
+    assert "DRY-RUN would set chlorinator" in caplog.text
+
+
+async def test_going_live_is_announced_loudly(
+    hass: HomeAssistant, caplog
+) -> None:
+    """"When did it start writing?" must be answerable from the log alone."""
+    await setup_pool(hass)
+    await go_live(hass)
+    await tick(hass, times=2)
+    assert "now WRITING to the pool" in caplog.text
+
+
+# --- v0.2.0: the pump and the chlorinator ------------------------------------
+
+async def test_v0_2_0_wires_the_pump_and_the_chlorinator_only(
+    hass: HomeAssistant,
+) -> None:
+    """STORY §8 step 2 is explicitly "pump and chlorinator, leaving the PdC
+    untouched". The PdC lands in step 3."""
+    assert PDC_ACTUATION_IMPLEMENTED is False
+
+
+async def test_live_turns_the_pump_on(hass: HomeAssistant) -> None:
+    await setup_pool(hass, **{DEFAULT_PUMP_SWITCH: "off"})
+    calls = record_calls(hass)
+    await go_live(hass)
+    await tick(hass, times=2)
+    assert DEFAULT_PUMP_SWITCH in entities_of(writes(calls, "switch", "turn_on"))
+
+
+async def test_live_sets_the_speed_the_law_asked_for(hass: HomeAssistant) -> None:
+    await setup_pool(hass, **{
+        "number.pompa_piscina_manual_percentage_power": "30",
+    })
+    calls = record_calls(hass)
+    await go_live(hass)
+    await tick(hass, times=2)
+    sent = writes(calls, "number", "set_value")
+    assert sent
+    assert sent[0]["service_data"]["value"] == 80.0
+
+
+async def test_live_puts_the_pump_controller_in_manual(hass: HomeAssistant) -> None:
+    """STORY §2: "Controller uses Manual only" — the percentage means nothing
+    while the pump is deciding its own speed."""
+    await setup_pool(hass, **{"select.pompa_piscina_pump_mode": "AI Flow"})
+    calls = record_calls(hass)
+    await go_live(hass)
+    await tick(hass, times=2)
+    sent = writes(calls, "select", "select_option")
+    assert sent
+    assert sent[0]["service_data"]["option"] == "Manual"
+
+
+async def test_live_enables_the_chlorinator(hass: HomeAssistant) -> None:
+    await setup_pool(hass)
+    calls = record_calls(hass)
+    await go_live(hass)
+    await tick(hass, times=2)
+    assert DEFAULT_CHLORINATOR_SWITCH in entities_of(
+        writes(calls, "switch", "turn_on")
     )
-    await tick(hass, times=3)
+
+
+async def test_a_pool_already_doing_the_right_thing_is_not_commanded(
+    hass: HomeAssistant,
+) -> None:
+    """The idempotence that makes a restart cheap: everything already matches,
+    so nothing is sent — no logbook entry, no relay click."""
+    await setup_pool(hass, **{
+        DEFAULT_PUMP_SWITCH: "on",
+        DEFAULT_CHLORINATOR_SWITCH: "on",
+    })
+    calls = record_calls(hass)
+    await go_live(hass)
+    await tick(hass, times=10)
+    assert writes(calls) == []
+
+
+async def test_a_command_is_not_repeated_every_tick(hass: HomeAssistant) -> None:
+    """The device never adopts it here (a mocked service changes no state), so
+    this is the worst case — and it must still be two commands, not sixty."""
+    with freeze_time("2026-09-16 12:00:00+02:00") as frozen:
+        await setup_pool(hass, **{DEFAULT_PUMP_SWITCH: "off"})
+        calls = record_calls(hass)
+        await go_live(hass)
+        await tick(hass, times=60, freezer=frozen)
+    pump_calls = [
+        e for e in entities_of(writes(calls, "switch")) if e == DEFAULT_PUMP_SWITCH
+    ]
+    assert len(pump_calls) == 2
+
+
+async def test_a_manual_override_is_re_asserted_once_then_left_alone(
+    hass: HomeAssistant, caplog
+) -> None:
+    """"Never fight a manual override, re-assert before concluding manual"."""
+    with freeze_time("2026-09-16 21:30:00+02:00") as frozen:
+        # Outside every window with the chlorine target met: the supervisor
+        # wants both off, and the owner keeps the chlorinator on regardless.
+        await setup_pool(hass, **{
+            "sensor.salt_chlorinator_runtime_today": "8",
+            DEFAULT_CHLORINATOR_SWITCH: "on",
+        })
+        calls = record_calls(hass)
+        await go_live(hass)
+        await tick(hass, times=30, freezer=frozen)
+    chlorine_calls = [
+        e for e in entities_of(writes(calls, "switch", "turn_off"))
+        if e == DEFAULT_CHLORINATOR_SWITCH
+    ]
+    assert len(chlorine_calls) == 2
+    assert "Not driving chlorinator" in caplog.text
+
+
+async def test_the_latch_lifts_when_the_intent_changes(hass: HomeAssistant) -> None:
+    """Having given up on a lever, the supervisor must still command it the
+    moment it wants something different — otherwise one argument disables it
+    until the next restart."""
+    with freeze_time("2026-09-16 21:30:00+02:00") as frozen:
+        await setup_pool(hass, **{
+            "sensor.salt_chlorinator_runtime_today": "8",
+            DEFAULT_CHLORINATOR_SWITCH: "on",
+        })
+        calls = record_calls(hass)
+        await go_live(hass)
+        await tick(hass, times=30, freezer=frozen)
+        assert len([
+            e for e in entities_of(writes(calls, "switch", "turn_off"))
+            if e == DEFAULT_CHLORINATOR_SWITCH
+        ]) == 2
+        # The owner gets in the water: chlorine is wanted again.
+        hass.states.async_set("input_boolean.pool_in_use", "on")
+        hass.states.async_set(DEFAULT_CHLORINATOR_SWITCH, "off")
+        await tick(hass, times=2, freezer=frozen)
+    assert DEFAULT_CHLORINATOR_SWITCH in entities_of(
+        writes(calls, "switch", "turn_on")
+    )
+
+
+async def test_maintenance_freezes_rather_than_switching_everything_off(
+    hass: HomeAssistant,
+) -> None:
+    """STORY §4 says maintenance "freezes all actuation". The owner flipped it
+    to work on the pool; stopping the pump under them is the opposite of what
+    they asked for."""
+    await setup_pool(hass, **{
+        DEFAULT_PUMP_SWITCH: "off",          # every lever disagrees with intent
+        DEFAULT_CHLORINATOR_SWITCH: "off",
+    })
+    await go_live(hass)
+    await hass.services.async_call(
+        "switch", "turn_on", {"entity_id": "switch.pool_maintenance"}, blocking=True
+    )
+    calls = record_calls(hass)
+    await tick(hass, times=5)
+    assert writes(calls) == []
+
+
+async def test_the_chlorinator_is_cut_before_the_pump(hass: HomeAssistant) -> None:
+    """Stop order, STORY §5.1: the cell must never be left enabled with the
+    pump already stopping."""
+    with freeze_time("2026-09-16 21:30:00+02:00") as frozen:
+        await setup_pool(hass, **{
+            "sensor.salt_chlorinator_runtime_today": "8",
+            DEFAULT_PUMP_SWITCH: "on",
+            DEFAULT_CHLORINATOR_SWITCH: "on",
+        })
+        calls = record_calls(hass)
+        await go_live(hass)
+        await tick(hass, times=2, freezer=frozen)
+    order = entities_of(writes(calls, "switch", "turn_off"))
+    assert DEFAULT_CHLORINATOR_SWITCH in order
+    assert DEFAULT_PUMP_SWITCH in order
+    assert order.index(DEFAULT_CHLORINATOR_SWITCH) < order.index(DEFAULT_PUMP_SWITCH)
+
+
+async def test_the_pump_is_not_stopped_under_a_running_pdc(
+    hass: HomeAssistant, caplog
+) -> None:
+    """The hydraulic interlock, from the actuator's side.
+
+    v0.2.0 does not drive the heat pump, so it may well be running on its own
+    thermostat when our pump window closes — and in v0.3.0 it keeps reading
+    `acceso` for minutes of cloud lag after we have told it to stop. Removing
+    flow from a running compressor is the one mistake worth holding filtration
+    hostage to avoid.
+    """
+    import logging
+    caplog.set_level(logging.INFO)
+    with freeze_time("2026-09-16 21:30:00+02:00") as frozen:
+        await setup_pool(hass, **{
+            "sensor.salt_chlorinator_runtime_today": "8",   # nothing owed
+            DEFAULT_PUMP_SWITCH: "on",
+            "binary_sensor.pool_pdc_acceso": "on",          # but it is heating
+        })
+        calls = record_calls(hass)
+        await go_live(hass)
+        await tick(hass, times=5, freezer=frozen)
+    assert DEFAULT_PUMP_SWITCH not in entities_of(
+        writes(calls, "switch", "turn_off")
+    )
+    assert "Holding off on the pump" in caplog.text
+
+
+async def test_the_pump_stops_once_the_pdc_has_wound_down(
+    hass: HomeAssistant,
+) -> None:
+    """The interlock defers the stop; it does not cancel it."""
+    with freeze_time("2026-09-16 21:30:00+02:00") as frozen:
+        await setup_pool(hass, **{
+            "sensor.salt_chlorinator_runtime_today": "8",
+            DEFAULT_PUMP_SWITCH: "on",
+            "binary_sensor.pool_pdc_acceso": "on",
+        })
+        calls = record_calls(hass)
+        await go_live(hass)
+        await tick(hass, times=3, freezer=frozen)
+        hass.states.async_set("binary_sensor.pool_pdc_acceso", "off")
+        await tick(hass, times=2, freezer=frozen)
+    assert DEFAULT_PUMP_SWITCH in entities_of(writes(calls, "switch", "turn_off"))
+
+
+async def test_the_speed_is_not_dropped_while_the_cell_is_still_enabled(
+    hass: HomeAssistant, caplog
+) -> None:
+    """STORY §6: never below 80 % with the chlorinator enabled, until the
+    step-down test establishes the cell's real flow-switch minimum.
+
+    Antifreeze outside the pump window wants 30 %. The chlorinator has been
+    told to stop, but the relay still reads on — so the speed waits.
+    """
+    import logging
+    caplog.set_level(logging.INFO)
+    with freeze_time("2026-09-16 21:30:00+02:00") as frozen:
+        await setup_pool(hass, **{
+            "sensor.gw3000a_outdoor_temperature": "-1.0",   # antifreeze
+            "sensor.salt_chlorinator_runtime_today": "8",
+            DEFAULT_CHLORINATOR_SWITCH: "on",               # not obeyed yet
+            "number.pompa_piscina_manual_percentage_power": "80",
+        })
+        calls = record_calls(hass)
+        await go_live(hass)
+        await tick(hass, times=3, freezer=frozen)
+        assert writes(calls, "number", "set_value") == []
+        assert "below the 80% chlorine minimum" in caplog.text
+        # The relay finally opens, and only then does the pump slow down.
+        hass.states.async_set(DEFAULT_CHLORINATOR_SWITCH, "off")
+        await tick(hass, times=2, freezer=frozen)
+    sent = writes(calls, "number", "set_value")
+    assert sent
+    assert sent[0]["service_data"]["value"] == 30.0
+
+
+async def test_a_latch_does_not_survive_a_trip_back_through_dry_run(
+    hass: HomeAssistant,
+) -> None:
+    """While the supervisor was not writing, anyone could have moved anything.
+    Carrying an argument across that gap would silence a lever that now needs
+    driving."""
+    with freeze_time("2026-09-16 21:30:00+02:00") as frozen:
+        await setup_pool(hass, **{
+            "sensor.salt_chlorinator_runtime_today": "8",
+            DEFAULT_CHLORINATOR_SWITCH: "on",
+        })
+        calls = record_calls(hass)
+        await go_live(hass)
+        await tick(hass, times=30, freezer=frozen)
+        before = len(entities_of(writes(calls, "switch", "turn_off")))
+        await hass.services.async_call(
+            "switch", "turn_on", {"entity_id": "switch.pool_dry_run"}, blocking=True
+        )
+        await tick(hass, times=2, freezer=frozen)
+        await go_live(hass)
+        await tick(hass, times=2, freezer=frozen)
+    assert len(entities_of(writes(calls, "switch", "turn_off"))) > before
+
+
+async def test_an_unreadable_lever_is_never_written_to(hass: HomeAssistant) -> None:
+    """The §5.2 rule generalised: a device we cannot read is one we know
+    nothing about, so we neither command it nor hold it against it."""
+    await setup_pool(hass, **{
+        "number.pompa_piscina_manual_percentage_power": "unavailable",
+    })
+    calls = record_calls(hass)
+    await go_live(hass)
+    await tick(hass, times=5)
+    assert writes(calls, "number", "set_value") == []
+
+
+async def test_a_pump_fault_notifies_the_owner(hass: HomeAssistant) -> None:
+    """STORY §7.5 asks for a notification alongside the block."""
+    calls = async_mock_service(hass, "notify", "mobile_app_matphone16")
+    await setup_pool(hass)
+    await go_live(hass)
+    await tick(hass)
+    hass.states.async_set("binary_sensor.pompa_piscina_problem", "on")
+    await tick(hass, times=2)
+    assert calls
+    assert "pump problem" in calls[-1].data["message"]
+
+
+async def test_a_routine_block_does_not_notify(hass: HomeAssistant) -> None:
+    """"Pump not in marcia" happens every evening at 20:00. Waking the owner
+    for it would train them to ignore the channel."""
+    calls = async_mock_service(hass, "notify", "mobile_app_matphone16")
+    await setup_pool(hass, **{DEFAULT_PUMP_RUNNING: "off"})
+    await go_live(hass)
+    await tick(hass, times=5)
     assert calls == []
-    assert "no actuation path" in caplog.text
+
+
+async def test_v0_2_0_never_touches_the_pdc(hass: HomeAssistant) -> None:
+    """Step 2 leaves the heat pump alone even when the law clearly wants it."""
+    with freeze_time("2026-09-16 23:00:00+02:00") as frozen:
+        await setup_pool(hass, **{
+            DEFAULT_WATER_TEMP: "25.6",
+            DEFAULT_TARIFF_BAND: "F3",
+        })
+        async_mock_service(hass, "climate", "set_hvac_mode")
+        async_mock_service(hass, "climate", "set_temperature")
+        calls = record_calls(hass)
+        await go_live(hass)
+        await tick(hass, times=5, freezer=frozen)
+        assert hass.states.get("sensor.pool_pdc_state").state == PDC_GRID
+    assert writes(calls, "climate") == []
+
+
+async def test_the_writes_are_visible_on_the_reason_sensor(
+    hass: HomeAssistant,
+) -> None:
+    await setup_pool(hass, **{DEFAULT_PUMP_SWITCH: "off"})
+    await go_live(hass)
+    await tick(hass, times=2)
+    attrs = hass.states.get("sensor.pool_supervisor_reason").attributes
+    assert attrs["dry_run"] is False
+    assert attrs["writes"] >= 1
+    assert attrs["last_write"]
 
 
 # --- the reason surface ------------------------------------------------------

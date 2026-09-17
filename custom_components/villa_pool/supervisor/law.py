@@ -56,21 +56,25 @@ def decide(state: PoolState, mem: Memory) -> tuple[Decision, Memory]:
     """One supervisor tick. Returns what we intend and the advanced Memory."""
     cfg = state.config
     w = cfg.windows
+    # Two clocks (see `model.PoolState`): `now` answers "where in the day are
+    # we" and nothing else; `mono` (UTC) is what every timer is measured
+    # against, so a DST fold cannot make an elapsed interval go negative.
     now = state.now
+    mono = state.mono
 
     # --- advance the latches first ------------------------------------------
-    mem = confirm_step(mem, now, state.pump_running)
-    mem = solar_step(mem, now, state.headroom_w, cfg.solar_on_w, cfg.solar_off_w)
+    mem = confirm_step(mem, mono, state.pump_running)
+    mem = solar_step(mem, mono, state.headroom_w, cfg.solar_on_w, cfg.solar_off_w)
     mem = antifreeze_step(
         mem, state.outdoor_temp, cfg.antifreeze_on_c, cfg.antifreeze_off_c
     )
-    pump_confirmed = is_confirmed(mem, now)
+    pump_confirmed = is_confirmed(mem, mono)
     was_running = mem.pdc_state in RUNNING_STATES
 
     # --- rung 1: the supervisor is switched out of the loop entirely ---------
     if state.maintenance or state.mode in FROZEN_MODES:
         why = "maintenance" if state.maintenance else f"mode {state.mode}"
-        mem = replace(mem, pdc_state=PDC_BLOCKED, pdc_since=mem.pdc_since or now)
+        mem = replace(mem, pdc_state=PDC_BLOCKED, pdc_since=mem.pdc_since or mono)
         return (
             Decision(
                 pump_on=False,
@@ -80,6 +84,11 @@ def decide(state: PoolState, mem: Memory) -> tuple[Decision, Memory]:
                 reason=f"Frozen: {why} — supervisor is not driving anything.",
                 blocked_reason=why,
                 pdc_write=False,
+                # "Freezes all actuation" (§4), which is hands-off, NOT
+                # "switch everything off": the owner flipped maintenance to
+                # work on the pool, and stopping the pump under them is the
+                # opposite of what they asked for.
+                actuate=False,
                 detail={"frozen": True},
             ),
             mem,
@@ -94,7 +103,7 @@ def decide(state: PoolState, mem: Memory) -> tuple[Decision, Memory]:
         pdc_blocked_modes=(*PDC_BLOCKED_MODES, MODE_FILTRATION_ONLY),
     )
     mem = postrun_step(
-        mem, now,
+        mem, mono,
         pdc_was_running=was_running,
         pdc_is_running=pdc_state in RUNNING_STATES,
         postrun_s=POSTRUN_S,
@@ -133,7 +142,7 @@ def decide(state: PoolState, mem: Memory) -> tuple[Decision, Memory]:
         pool_in_use=state.pool_in_use and state.mode != MODE_WINTER,
         antifreeze=antifreeze,
         catchup=catchup,
-        postrun=postrun_active(mem, now),
+        postrun=postrun_active(mem, mono),
     )
 
     chlorine_on, chlorine_reason = chlorine_decision(
@@ -218,7 +227,7 @@ def _reason_line(*, state, mem, pdc_state, pdc_reason, pump_on, pump_speed,
 
 def restore_memory(
     *,
-    now: datetime,
+    mono: datetime,
     pdc_running: bool | None,
     water_temp: float | None,
     min_temp: float,
@@ -232,6 +241,9 @@ def restore_memory(
 
     "On HA restart: restore settings; re-derive the PdC state from
     `pool_pdc_acceso` + water temp, do not assume OFF."
+
+    `mono` is the UTC anchor (`PoolState.mono`), because everything stamped
+    here is read back as a duration.
 
     The timers come back already satisfied (`pdc_since` a full MIN_ON ago,
     `pdc_last_stop` a full MIN_OFF ago) so that a restart mid-run is a
@@ -263,12 +275,12 @@ def restore_memory(
 
     return Memory(
         pdc_state=pdc_state,
-        pdc_since=now - timedelta(seconds=PDC_MIN_ON_S),
-        pdc_last_stop=now - timedelta(seconds=PDC_MIN_OFF_S),
+        pdc_since=mono - timedelta(seconds=PDC_MIN_ON_S),
+        pdc_last_stop=mono - timedelta(seconds=PDC_MIN_OFF_S),
         solar_ok=solar_ok,
-        solar_raw_since=now - timedelta(hours=1) if solar_ok else None,
-        solar_lost_since=None if solar_ok else now,
+        solar_raw_since=mono - timedelta(hours=1) if solar_ok else None,
+        solar_lost_since=None if solar_ok else mono,
         pump_running_since=(
-            now - timedelta(seconds=PUMP_CONFIRM_S) if pump_running else None
+            mono - timedelta(seconds=PUMP_CONFIRM_S) if pump_running else None
         ),
     )

@@ -10,6 +10,17 @@ have to know which submodule a thing lives in.
 """
 from __future__ import annotations
 
+from .actuation import (
+    BLIND,
+    HOLD,
+    LATCHED,
+    SETTLING,
+    WRITE,
+    Lever,
+    Plan,
+    plan,
+    same,
+)
 from .chlorine import (
     catchup_active,
     chlorine_decision,
@@ -32,10 +43,17 @@ from .solar import raw_headroom_ok, solar_lost_for, solar_step
 from .windows import in_slot, in_window, since_start, window_length
 
 __all__ = [
+    "BLIND",
     "Decision",
+    "HOLD",
+    "LATCHED",
+    "Lever",
     "Memory",
+    "Plan",
     "PoolConfig",
     "PoolState",
+    "SETTLING",
+    "WRITE",
     "Windows",
     "antifreeze_step",
     "band_price",
@@ -52,10 +70,12 @@ __all__ = [
     "in_window",
     "is_confirmed",
     "pdc_step",
+    "plan",
     "postrun_active",
     "pump_plan",
     "raw_headroom_ok",
     "restore_memory",
+    "same",
     "since_start",
     "solar_conditions",
     "solar_lost_for",

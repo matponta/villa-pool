@@ -1,5 +1,106 @@
 # Next session — kickstart prompts
 
+## v0.2.0 — the pump and the chlorinator actuate (2026-09-17) — NOT YET DEPLOYED
+
+STORY §8 step 2. The control law is unchanged; what is new is that a decision
+can now become a service call. **`switch.pool_dry_run` is ON by default and is
+what gates it**, so installing or upgrading still writes nothing until the owner
+deliberately turns it off — which is logged at WARNING when it happens.
+
+**Levers wired.** `switch.pompa_piscina` (on/off),
+`number.pompa_piscina_manual_percentage_power` (speed),
+`select.pompa_piscina_pump_mode` (forced to `Manual`, without which the
+percentage means nothing — STORY §2), `switch.clorinatore` (enable). The PdC is
+**not** wired: `actuator.PDC_ACTUATION_IMPLEMENTED` is False and the climate
+levers are not constructed at all, so "leaving the PdC untouched" is structural
+rather than a promise. Also new: a push notification on a *hardware* block (PdC
+fault / pump problem — §7.5) and on a latched lever. Routine blocks such as
+"pump not in marcia" never notify.
+
+**The DST fix landed first**, as the v0.1.0 review required. `PoolState` now
+carries two clocks: `now` (naive local) for windows and time-of-day, `mono`
+(UTC) for every duration, with all of `Memory` stamped in the UTC frame. The
+March transition otherwise makes a 10-minute-old stamp read as 70 minutes and
+hands the compressor a restart MIN_OFF should have refused.
+
+**How a write happens** is documented in `CLAUDE.md` → *How a write happens*:
+idempotent, re-assert exactly once then latch and stop fighting, never judge an
+unreadable device, and a hydraulic order inside each tick. **182 tests.**
+
+### Pre-tag adversarial review — three real defects found and fixed
+
+1. **A fresh lever re-commanded a pool that was already correct.** "Is this a
+   new intent?" was evaluated before "does the device already agree?", so the
+   very first tick after every restart, reload or dry-run flip would have sent
+   `switch.turn_on` to a running pump and `switch.turn_on` to an enabled
+   chlorinator — relay clicks and logbook entries for nothing, on exactly the
+   event that happens most often. Found by
+   `test_holding_the_same_agreement_never_writes_again`. The agreement check now
+   comes first.
+2. **The test that proved the dry run was dry could not have failed.**
+   `async_mock_service` *replaces* a domain's service handler, and `switch`,
+   `number` and `select` all register their own when the integration forwards
+   its platforms — silently overwriting the mock. Every v0.1.0 "no service call
+   is ever made" assertion was therefore passing because nothing was listening.
+   Replaced with a bus listener on `EVENT_CALL_SERVICE`, which observes the real
+   call and cannot be overwritten; the same tests now genuinely constrain the
+   default configuration. This is the finding to remember: the v0.1.0 release
+   note's central safety claim was, as tested, vacuous.
+3. **`maintenance` would have switched the pool off.** Rung 1 of the ladder
+   returns `pump_on=False, chlorine_on=False`, which reads as "turn everything
+   off" to an actuator and as "freeze" to §4. The owner flips maintenance to
+   work on the pool; stopping the pump under them is the opposite of the ask.
+   `Decision.actuate=False` now means hands off every lever.
+
+Three more guards were added in the same pass, none of them from a defect but
+all from asking what happens when a command has *not* landed yet:
+
+- the pump is never stopped while `binary_sensor.pool_pdc_acceso` reads on
+  (v0.2.0 does not drive the PdC at all, so it may well be running on its own
+  thermostat when our window closes);
+- the speed is never dropped below 80 % while `switch.clorinatore` still reads
+  on (§6, cell flow-switch minimum unknown);
+- every write is bounded by `WRITE_TIMEOUT_S`, so one hung cloud call cannot
+  hold the engine's lock and make the supervisor deaf.
+
+Both hydraulic guards *defer* rather than cancel, and both fail towards more
+flow.
+
+Also checked and found correct: the latch clears on a new intent and on the
+device agreeing again; a read gap neither writes nor counts against a device nor
+resets the settle window; the stop order really does cut the cell before the
+pump; `unload` still releases nothing.
+
+### Before turning the dry run off — HA-side, NOT done from here
+
+Retiring a live automation while the pool has no other chlorination control
+would leave the cell unmanaged, so this waits for the owner:
+
+1. Retire `automation.pool_chlorinator_daily_3h_run` and
+   `automation.pool_chlorinator_follows_pool_in_use`. Left enabled they and the
+   supervisor take turns on `switch.clorinatore`, and the supervisor will read
+   the disagreement as a manual override and latch the lever — correctly, and
+   uselessly.
+2. Keep every `pool_allerta_*` and the low-circulation safety cutoff. They are
+   independent watchdogs and never fight the supervisor.
+3. Confirm `automation.pool_test_cop_notturno` is disabled (§6).
+4. Run the 24 h dry comparison below first.
+
+### What to watch in the first live hour
+
+1. **One command, not sixty.** `grep WRITE` in the log: a handful of lines a
+   day, each with its reason. A lever being commanded every 60 s means the
+   device is not adopting it and the latch is not working.
+2. **`sensor.pool_supervisor_reason` → `latched`.** Empty is correct. A lever
+   in it is the supervisor saying "something else is driving this"; the two
+   chlorinator automations are the likely culprit if step 1 above was skipped.
+3. **The pump never stops under a running PdC.** `Holding off on the pump` in
+   the log is the guard working, not a fault.
+4. **`select.pompa_piscina_pump_mode` reads `Manual`** — if it does not, the
+   speed writes are cosmetic.
+
+---
+
 ## v0.1.0 — repo scaffold + dry-run supervisor (2026-09-17) — NOT YET DEPLOYED
 
 First release. Scaffolded from the `villa-hvac` skeleton (config-flow hub, one
@@ -133,7 +234,7 @@ logger:
 11. **Log volume.** A handful of `DRY-RUN` lines per day, each with a reason.
     Dozens means something is flapping — that is a finding, not noise.
 
-### Kickstart prompt for the next session
+### Kickstart prompt for the next session — DONE, this is what v0.2.0 did
 
 > Read `CLAUDE.md` then `STORY_POOL_CONTROLLER.md`. v0.1.0 ran 24 h dry —
 > the log comparison is in this file under "Dry-run result". Now do STORY §8
@@ -149,7 +250,9 @@ logger:
 
 ### Dry-run result
 
-_(to be filled in after the 24 h run)_
+_(still to be filled in — v0.1.0 was never deployed, so the 24 h comparison has
+not happened. v0.2.0 was written against the code rather than against a day of
+logs; the dry run is still owed before anything is turned live.)_
 
 ### Still open for the owner
 

@@ -187,6 +187,35 @@ COVER_CLOSED_CHLORINE_CUTOFF_H: Final = 24.0
 # switch.pool_maintenance freezes all actuation and auto-releases after this.
 MAINTENANCE_AUTO_OFF_S: Final = 4 * 3600
 
+# --- Actuation (§8 steps 2-3) -------------------------------------------------
+# How long a lever is given to adopt a command before the supervisor judges it.
+# The local levers answer in seconds (tuya-local bridge, Shelly relay), so 2 min
+# is already generous. The PdC is cloud-polled at ~5 min and §5.2 says to judge
+# nothing about it for 10-15 min after a command, so it gets the full grace —
+# which is also what enforces §6's "never write hvac_mode more than once per
+# MIN_ON/MIN_OFF window", MIN_OFF being 15 min.
+SETTLE_LOCAL_S: Final = 120
+SETTLE_PDC_S: Final = PDC_STALE_GRACE_S
+# A single write may not hold the engine's lock longer than this. A cloud lever
+# that never answers would otherwise make the supervisor deaf for every tick
+# after it, which is a far worse failure than one missed command.
+WRITE_TIMEOUT_S: Final = 10
+# Commands one intent is worth before the supervisor stops driving that lever
+# (§8 step 2: "never fight a manual override, re-assert before concluding
+# manual"). One command, then one re-assert, then hands off.
+WRITE_ATTEMPTS: Final = 2
+# The pump's own controller has to be in Manual for the percentage to mean
+# anything at all (STORY §2: "Controller uses Manual only").
+PUMP_MODE_MANUAL: Final = "Manual"
+# Read-back slop. A setpoint written as 27.0 may come back as 27, and a speed
+# written as 80 as 80.0; neither is a disagreement worth a second command.
+SETPOINT_TOLERANCE: Final = 0.2
+PUMP_SPEED_TOLERANCE: Final = 0.5
+# Blocks worth waking the owner for. A mode change or maintenance is the owner's
+# own doing and "pump not in marcia" is routine; these two are hardware saying
+# something is wrong (STORY §7.5).
+NOTIFIABLE_BLOCKS: Final = ("PdC fault", "pump problem")
+
 # --- Windows (§3: same every day -> time entities, not schedules) ------------
 DEFAULT_PUMP_START: Final = "08:00"
 DEFAULT_PUMP_END: Final = "20:00"

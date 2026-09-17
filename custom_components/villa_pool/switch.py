@@ -1,7 +1,9 @@
-"""The supervisor's own switches (STORY §4), including the v0.1.0 dry-run flag.
+"""The supervisor's own switches (STORY §4), including the dry-run gate.
 
 None of these actuate anything themselves — they are inputs to the control law,
-restored across restarts and published into `runtime_data.settings`.
+restored across restarts and published into `runtime_data.settings`. `dry_run`
+is the one the engine reads to decide whether this tick's decision becomes
+service calls or only log lines.
 """
 from __future__ import annotations
 
@@ -36,8 +38,9 @@ class Flag:
 FLAGS: tuple[Flag, ...] = (
     Flag(
         "dry_run", "Dry run", True, "mdi:file-eye-outline",
-        "ON: the supervisor only says what it would do. v0.1.0 has no write "
-        "path at all, so turning this off does not actuate anything yet.",
+        "ON: the supervisor decides, reports and logs what it would send, but "
+        "calls nothing. OFF: it drives the pump and the chlorinator for real "
+        "(and, from v0.3.0, the PdC). Every command is logged with its reason.",
     ),
     Flag(
         "grid_heating", "Grid heating", True, "mdi:transmission-tower",
