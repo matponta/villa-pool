@@ -1,0 +1,79 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Villa Pool",
+        "description": "Seleziona le entità della piscina. I valori predefiniti sono l'inventario verificato; lascia vuoto il sensore del telo finché non è installato.",
+        "data": {
+          "pump_switch": "Interruttore pompa",
+          "pump_running": "Pompa in marcia (verità)",
+          "pump_mode_select": "Modalità pompa",
+          "pump_speed_number": "Velocità pompa",
+          "pump_flow_sensor": "Portata pompa",
+          "pump_power_sensor": "Potenza pompa",
+          "pump_problem": "Guasto pompa",
+          "pump_flow_pressure_warning": "Allarme portata/pressione",
+          "pump_hours_24h": "Ore pompa ultime 24 h",
+          "pdc_climate": "PdC (climate)",
+          "pdc_running": "PdC realmente accesa",
+          "pdc_fault": "Guasto PdC",
+          "pdc_power_sensor": "Potenza elettrica PdC",
+          "pdc_energy_sensor": "Energia PdC",
+          "pdc_air_temp_sensor": "Temperatura aria PdC",
+          "chlorinator_switch": "Abilitazione clorinatore",
+          "chlorinator_running": "Clorinatore in produzione",
+          "chlorinator_hours_today": "Ore clorinatore oggi",
+          "water_temp_sensor": "Temperatura acqua piscina",
+          "outdoor_temp_sensor": "Temperatura esterna",
+          "solar_headroom_sensor": "Surplus solare",
+          "grid_power_sensor": "Potenza di rete",
+          "tariff_band_sensor": "Fascia oraria",
+          "workday_sensor": "Giorno feriale / festivo",
+          "pool_in_use": "Piscina in uso",
+          "cover_closed": "Telo chiuso (opzionale - non ancora installato)",
+          "notify_target": "Servizio di notifica"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Villa Pool è già configurata."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Entità Villa Pool",
+        "description": "Riseleziona qualsiasi ingresso - ad esempio il sensore del telo una volta installato.",
+        "data": {
+          "pump_switch": "Interruttore pompa",
+          "pump_running": "Pompa in marcia (verità)",
+          "pump_mode_select": "Modalità pompa",
+          "pump_speed_number": "Velocità pompa",
+          "pump_flow_sensor": "Portata pompa",
+          "pump_power_sensor": "Potenza pompa",
+          "pump_problem": "Guasto pompa",
+          "pump_flow_pressure_warning": "Allarme portata/pressione",
+          "pump_hours_24h": "Ore pompa ultime 24 h",
+          "pdc_climate": "PdC (climate)",
+          "pdc_running": "PdC realmente accesa",
+          "pdc_fault": "Guasto PdC",
+          "pdc_power_sensor": "Potenza elettrica PdC",
+          "pdc_energy_sensor": "Energia PdC",
+          "pdc_air_temp_sensor": "Temperatura aria PdC",
+          "chlorinator_switch": "Abilitazione clorinatore",
+          "chlorinator_running": "Clorinatore in produzione",
+          "chlorinator_hours_today": "Ore clorinatore oggi",
+          "water_temp_sensor": "Temperatura acqua piscina",
+          "outdoor_temp_sensor": "Temperatura esterna",
+          "solar_headroom_sensor": "Surplus solare",
+          "grid_power_sensor": "Potenza di rete",
+          "tariff_band_sensor": "Fascia oraria",
+          "workday_sensor": "Giorno feriale / festivo",
+          "pool_in_use": "Piscina in uso",
+          "cover_closed": "Telo chiuso (opzionale - non ancora installato)",
+          "notify_target": "Servizio di notifica"
+        }
+      }
+    }
+  }
+}

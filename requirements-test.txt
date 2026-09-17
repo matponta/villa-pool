@@ -1,0 +1,9 @@
+# Dev/test dependencies for the villa_pool custom component.
+# Pin the test harness to the EXACT deploy-target HA release so "CI green" means
+# green-on-target (not on a stale HA). pytest-homeassistant-custom-component
+# 0.13.357 bundles homeassistant==2026.8.3 — the owner's live HA (STORY §2) —
+# which requires Python >=3.14, so the venv AND CI must use a 3.14 interpreter.
+# Bump this pin (+ the CI python-version + hacs.json) deliberately when the
+# deploy-target HA changes.
+pytest-homeassistant-custom-component==0.13.357
+ruff==0.15.20
