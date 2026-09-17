@@ -31,7 +31,13 @@ from .chlorine import (
 from .cop import band_price, cop_estimate, solar_share, thermal_cost
 from .law import decide, restore_memory
 from .model import Decision, Memory, PoolConfig, PoolState, Windows
-from .pdc import blocking_reason, grid_conditions, pdc_step, solar_conditions
+from .pdc import (
+    blocking_reason,
+    grid_conditions,
+    grid_window,
+    pdc_step,
+    solar_conditions,
+)
 from .pump import (
     antifreeze_step,
     confirm_step,
@@ -39,6 +45,7 @@ from .pump import (
     postrun_active,
     pump_plan,
 )
+from .session import Session, SessionResult, session_step, thermal_kwh
 from .solar import raw_headroom_ok, solar_lost_for, solar_step
 from .windows import in_slot, in_window, since_start, window_length
 
@@ -53,6 +60,8 @@ __all__ = [
     "PoolConfig",
     "PoolState",
     "SETTLING",
+    "Session",
+    "SessionResult",
     "WRITE",
     "Windows",
     "antifreeze_step",
@@ -65,6 +74,7 @@ __all__ = [
     "cover_cutoff",
     "decide",
     "grid_conditions",
+    "grid_window",
     "hours_missing",
     "in_slot",
     "in_window",
@@ -76,6 +86,7 @@ __all__ = [
     "raw_headroom_ok",
     "restore_memory",
     "same",
+    "session_step",
     "since_start",
     "solar_conditions",
     "solar_lost_for",
@@ -83,5 +94,6 @@ __all__ = [
     "solar_step",
     "target_hours",
     "thermal_cost",
+    "thermal_kwh",
     "window_length",
 ]

@@ -39,6 +39,30 @@ from .windows import in_window
 
 RUNNING_STATES = (PDC_SOLAR, PDC_GRID)
 
+# Which window is authorising a grid run. The night one is §3's 23:00-07:00;
+# the daytime one is §5.4's top-up inside the SOLAR window, and exists because
+# the air is 8-10 K warmer by day — the same thermal kWh costs 30-45 % less,
+# and F1 and F3 are within a cent of each other.
+GRID_NIGHT = "night"
+GRID_DAY = "day"
+
+
+def grid_window(state: PoolState) -> str | None:
+    """Which grid window `now` falls in, or None.
+
+    The daytime top-up never widens the band rule: F2 is vetoed in
+    `grid_conditions` exactly as before, which is what keeps Saturday daytime
+    (F2 07:00-23:00) out of it even though the solar window is wide open.
+    """
+    w = state.config.windows
+    if in_window(state.now, w.pdc_grid_start, w.pdc_grid_end):
+        return GRID_NIGHT
+    if state.grid_day_topup and in_window(
+        state.now, w.pdc_solar_start, w.pdc_solar_end
+    ):
+        return GRID_DAY
+    return None
+
 
 def blocking_reason(state: PoolState, *, pump_confirmed: bool,
                     pdc_blocked_modes: tuple[str, ...]) -> str | None:
@@ -97,12 +121,11 @@ def grid_conditions(
     §7.4's "`reason` says `band F2`" is satisfied by the band branch below.
     Reason on BANDS, never on prices — the PUN index changes monthly (§3).
     """
-    w = state.config.windows
     if not state.grid_heating:
         return False, "grid heating off"
     if state.water_temp is None:
         return False, "water temp unknown"
-    if not in_window(state.now, w.pdc_grid_start, w.pdc_grid_end):
+    if grid_window(state) is None:
         return False, "outside grid window"
     if state.band in GRID_FORBIDDEN_BANDS:
         return False, f"band {state.band}"
@@ -195,7 +218,14 @@ def pdc_step(
         keep_ok, keep_refusal = grid_conditions(state, running=True)
         if not keep_ok:
             return _stop(mem, now, keep_refusal or "grid no longer allowed", cfg)
-        return _hold(mem, PDC_GRID, "heating on grid", cfg)
+        # Named while it RUNS, not only when it starts: the entry reason scrolls
+        # past in one tick, and these two cost very different amounts.
+        return _hold(
+            mem, PDC_GRID,
+            "heating on grid — daytime top-up"
+            if grid_window(state) == GRID_DAY else "heating on grid",
+            cfg,
+        )
 
     # --- transitions out of OFF ----------------------------------------------
     min_off_done = _elapsed(mem.pdc_last_stop, now, PDC_MIN_OFF_S)
@@ -206,7 +236,13 @@ def pdc_step(
     if grid_ok_now:
         if not min_off_done:
             return _hold(mem, PDC_OFF, "grid due but MIN_OFF not elapsed", cfg)
-        return _enter(mem, now, PDC_GRID, "water below minimum in grid window", cfg)
+        where = grid_window(state)
+        return _enter(
+            mem, now, PDC_GRID,
+            "water below minimum — daytime top-up" if where == GRID_DAY
+            else "water below minimum in grid window",
+            cfg,
+        )
 
     return _hold(mem, PDC_OFF, grid_refusal or "no heating demand", cfg)
 

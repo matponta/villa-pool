@@ -42,7 +42,83 @@ discovering it during a reinstall.
 
 ---
 
-## v0.5.0 — dashboard cards + owner manual (2026-09-17)
+## v0.5.0 — daytime grid top-up + the heating-session log (2026-09-17)
+
+Two things the owner asked for on the same breath, and they turned out to
+interact.
+
+**`switch.pool_grid_day_topup`, default ON.** §5.4's proposal, confirmed. GRID
+runs inside the SOLAR window when the sun is not there; the night window stays
+as the fallback; the F2 veto is untouched, which is what keeps Saturday daytime
+(F2 07:00-23:00) out even though the solar window is wide open. `grid_window()`
+is the one place that decides which window authorises a run, and the reason line
+names which — on entry *and* while it holds.
+
+**`sensor.pool_last_session_*`** — specified in §4, explained in §5.4, and never
+built. It was missing from v0.1.0 through v0.4.0 without ever being recorded as
+a gap. Three sensors (COP, mean air, kWh), because fitting needs two recorded
+series and an attribute is awkward to graph.
+
+**They interact.** The session log marks a run `clean` only if it stayed wholly
+in the night, because §5.4 says daylight contaminates it with solar gain. That
+rule was cheap when GRID only ran at night — the day top-up is precisely what
+makes daytime grid runs ordinary, so `all_night` is ANDed every tick rather than
+inferred from the mode.
+
+**265 tests.**
+
+### What the replay measured
+
+A September day, overcast, water starting 1.4 K low, with and without the
+top-up:
+
+| | senza | con |
+|---|---|---|
+| acqua a fine giornata | 24.67 °C | **26.14 °C** |
+| avviamenti compressore | 1 | 2 |
+| comandi `hvac_mode` | 3 | 5 |
+| costo marginale | 0.0659 €/kWh_th | **0.0501 €/kWh_th** |
+| spesa giornaliera | 4.61 € | **8.12 €** |
+
+24 % cheaper per thermal kWh, consistent with §5.4's 30-45 % estimate (which
+assumed colder October nights), for one extra compressor start — no churn.
+
+**But the daily spend roughly doubles**, and that is the thing to say out loud:
+the pool now reaches and holds the minimum instead of drifting below it, so it
+delivers about twice the heat. Cheaper per kWh, more kWh. If the bill is ever
+the complaint, the switch is the lever.
+
+### Pre-tag adversarial review — two real findings
+
+1. **A running top-up was indistinguishable from a night run.** The entry reason
+   named it; the *holding* reason did not, and holding is what the owner
+   actually reads an hour later. Two runs that cost meaningfully different
+   amounts looked identical on the dashboard. Fixed in `_hold`, pinned by
+   `test_and_keeps_saying_so_while_it_runs`.
+2. **It changes acceptance criterion §7.1.** At 17:25 on a weekday, F1, water
+   1.4 K low, the answer is no longer "PdC OFF". Rather than quietly editing the
+   criterion, §7.1 is still pinned exactly as written (with the switch off,
+   which is still a supported configuration) and the amended behaviour is pinned
+   beside it. The same treatment was needed for §7.3, whose solar-dwell snapshot
+   also sits below the minimum. Both amendments are recorded in the STORY,
+   dated.
+
+Also checked: the session log refuses to invent a COP in five distinct ways
+(too short, ΔT inside the probe's resolution, missing water, missing energy, a
+meter that did not move) and publishes the session anyway with a `note`; a run
+already going at startup is not adopted; a polling gap does not chop one run
+into several; the measured night of 16→17/9 comes back as 2.81 against the 2.82
+in §1.
+
+### Still to do for this release
+
+`dashboard_v0.5.0_cards.yaml` is written but **not applied** — unlike the v0.4.0
+cards, these reference entities that do not exist on the live system until
+v0.5.0 is installed. Apply them after the upgrade.
+
+---
+
+## v0.4.1 — dashboard cards + owner manual (2026-09-17)
 
 STORY §8 step 5. Mostly delivery rather than code.
 

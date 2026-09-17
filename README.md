@@ -7,8 +7,8 @@ chlorinator state, and coordinates the three as one hydraulic system:
 filtration windows, a guaranteed minimum water temperature, solar-first
 heating, chlorination to a daily target, and winter antifreeze.
 
-> **Status: v0.4.0 — winter mode and antifreeze are live, on top of the pump,
-> the chlorinator and the heat pump.** `switch.pool_dry_run` is **ON by
+> **Status: v0.5.0 — daytime grid top-up and the heating-session log, on top of
+> the pump, the chlorinator, the heat pump, winter and antifreeze.** `switch.pool_dry_run` is **ON by
 > default** and is what gates every write, so a fresh install still only
 > decides, reports and logs. Turning it off is the owner's deliberate act and
 > is announced in the log.
@@ -98,6 +98,21 @@ mode it is overriding).
 them back) and `holding` (levers it wants to move but is holding back for a
 hydraulic reason). If the pool is not following, read those two first.
 
+## Cost, and the two levers over it
+
+`switch.pool_grid_day_topup` (default ON) lets the heat pump take grid inside the
+solar window when the sun is not there. The air is 8-10 K warmer by day, so the
+marginal cost is about 24 % lower per thermal kWh — but the pool then *reaches*
+its minimum instead of drifting below it, so it delivers roughly twice the heat
+and the daily spend roughly doubles. Cheaper per kWh, more kWh. Turn the switch
+off for night-only heating.
+
+`sensor.pool_last_session_cop` records what each heating run actually achieved —
+thermal kWh from the water's rise over the electrical kWh on phase A — so the COP
+model can eventually be fitted instead of guessed. Only runs that stayed wholly
+in the night are marked `clean`: daylight adds solar gain the compressor would
+otherwise take credit for.
+
 ## Key verified facts
 
 Measured live; do not re-derive them (see `CLAUDE.md`):
@@ -114,7 +129,7 @@ Measured live; do not re-derive them (see `CLAUDE.md`):
 
 ## Tests
 
-229 tests, all pure-fast except the end-to-end ones, which run against the exact
+265 tests, all pure-fast except the end-to-end ones, which run against the exact
 deploy-target HA.
 
 ```bash

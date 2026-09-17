@@ -14,7 +14,12 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfTime, UnitOfVolume
+from homeassistant.const import (
+    UnitOfEnergy,
+    UnitOfTemperature,
+    UnitOfTime,
+    UnitOfVolume,
+)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -54,6 +59,9 @@ async def async_setup_entry(
         ChlorineHoursMissingSensor(coordinator, entry),
         VolumeTodaySensor(coordinator, entry),
         CoverClosedForSensor(coordinator, entry),
+        LastSessionCopSensor(coordinator, entry),
+        LastSessionAirTempSensor(coordinator, entry),
+        LastSessionEnergySensor(coordinator, entry),
     ])
 
 
@@ -364,3 +372,118 @@ class CoverClosedForSensor(PoolSensorBase):
                 if not self.coordinator.eid("cover_closed") else None
             ),
         }
+
+
+# --- the §5.4 heating-session log --------------------------------------------
+#
+# Three sensors rather than one, because the point of logging sessions at all is
+# to FIT the COP model: the fit needs COP against mean air temperature as two
+# recorded series, and an attribute is awkward to graph or run statistics on.
+# Everything else about the run rides as attributes on the COP.
+#
+# All three are `unknown` until the first run completes, and they do not survive
+# a restart — a session is only published when the supervisor saw both its ends.
+
+
+class LastSessionBase(PoolSensorBase):
+    """Reads the engine's last completed heating session."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def _session(self):
+        return getattr(self._engine, "last_session", None)
+
+    @property
+    def available(self) -> bool:
+        return self._session is not None
+
+
+class LastSessionCopSensor(LastSessionBase):
+    """COP measured over the last heating run — the number to fit against.
+
+    Computed the owner's own way: thermal kWh is `90 m3 x 1.163 x delta T`, and
+    the COP is that over the electrical kWh on phase A. The night of 16->17/9
+    gives 52.3 kWh_th / 18.6 kWh_el = 2.81, against the 2.82 recorded in §1.
+
+    It is deliberately `unknown` rather than approximate when the run was too
+    short, the water rise was inside the probe's own resolution, or a reading
+    was missing: this exists to be fitted, and a wrong point is worse than no
+    point. `note` says which of those it was.
+    """
+
+    _attr_name = "Last session cop"
+    _attr_icon = "mdi:gauge-full"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator, entry, "last_session_cop")
+
+    @property
+    def native_value(self) -> float | None:
+        session = self._session
+        return session.cop if session else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        session = self._session
+        if session is None:
+            return {}
+        return {
+            "started": session.started.isoformat() if session.started else None,
+            "ended": session.ended.isoformat() if session.ended else None,
+            "minutes": session.minutes,
+            "mode": session.mode,
+            "water_start": session.water_start,
+            "water_end": session.water_end,
+            "delta_t": session.delta_t,
+            "thermal_kwh": session.thermal_kwh,
+            "energy_kwh": session.energy_kwh,
+            "air_mean": session.air_mean,
+            "cover_closed": session.cover_closed,
+            # False for anything that touched daylight. §5.4: "Daytime sessions
+            # are contaminated by solar gain on the pool" — the sun did part of
+            # the work and the compressor would get the credit. Only the clean
+            # ones may calibrate the model.
+            "clean": session.clean,
+            "note": session.note,
+        }
+
+
+class LastSessionAirTempSensor(LastSessionBase):
+    """Mean outdoor/evaporator air over the last run — the fit's x axis."""
+
+    _attr_name = "Last session air temp"
+    _attr_icon = "mdi:thermometer-lines"
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator, entry, "last_session_air_temp")
+
+    @property
+    def native_value(self) -> float | None:
+        session = self._session
+        return session.air_mean if session else None
+
+
+class LastSessionEnergySensor(LastSessionBase):
+    """Electrical kWh the last run drew on phase A."""
+
+    _attr_name = "Last session energy"
+    _attr_icon = "mdi:lightning-bolt"
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator, entry, "last_session_energy")
+
+    @property
+    def native_value(self) -> float | None:
+        session = self._session
+        return session.energy_kwh if session else None

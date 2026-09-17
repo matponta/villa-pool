@@ -61,9 +61,17 @@ class TestCriterion01SnapshotOf16September:
     pump is ON at 80 % (pool_in_use), chlorine enabled."""
 
     def snapshot(self):
+        """The criterion exactly as the owner wrote it.
+
+        `grid_day_topup=False` is what the pool was when §7 was written — the
+        daytime top-up did not exist. It is still a supported configuration (the
+        switch), so this keeps testing the criterion rather than quietly
+        retiring it; `test_the_daytime_top_up_changes_this_criterion` below pins
+        what the 2026-09-17 amendment does to the same snapshot.
+        """
         now = at(2026, 9, 16, 17, 25)      # Wednesday
         return state(now, water_temp=25.6, headroom_w=0.0, band="F1",
-                     pool_in_use=True), memory(now)
+                     pool_in_use=True, grid_day_topup=False), memory(now)
 
     def test_pdc_is_off(self):
         st, mem = self.snapshot()
@@ -91,6 +99,24 @@ class TestCriterion01SnapshotOf16September:
         dec, _ = run(st, mem)
         assert dec.reason
         assert "\n" not in dec.reason
+
+    def test_the_daytime_top_up_changes_this_criterion(self):
+        """§5.4 amendment, owner-confirmed 2026-09-17.
+
+        17:25 on a weekday is F1 and inside the solar window, and the water is
+        1.4 K below the guaranteed minimum. With the top-up on, "the PdC is OFF"
+        is no longer the right answer — heating now costs 30-45 % less per
+        thermal kWh than waiting for 23:00, which is the whole point of the
+        amendment. This is a deliberate change to an acceptance criterion, not
+        a regression.
+        """
+        now = at(2026, 9, 16, 17, 25)
+        st = state(now, water_temp=25.6, headroom_w=0.0, band="F1",
+                   pool_in_use=True, grid_day_topup=True)
+        dec, _ = run(st, memory(now))
+        assert dec.pdc_state == PDC_GRID
+        assert dec.pdc_setpoint == DEFAULT_MIN_TEMP
+        assert "daytime top-up" in dec.reason
 
 
 # --- §7.2 --------------------------------------------------------------------
@@ -154,9 +180,18 @@ class TestCriterion03SolarDwellAndMinOn:
     12 min cloud does not stop it before MIN_ON."""
 
     def sunny(self, headroom=3000.0):
+        """The dwell criterion, isolated from the grid path.
+
+        The water is below the guaranteed minimum here, so with the 2026-09-17
+        daytime top-up the machine would start on GRID whatever the sun is
+        doing — and this criterion is about the SOLAR entry dwell, not about
+        whether something else also wants to heat. Turning the top-up off is
+        what keeps the test answering the question it was written to ask;
+        `TestDaytimeGridTopUp` covers the other one.
+        """
         now = at(2026, 9, 16, 12, 0)       # inside the 10-18 solar window
-        return state(now, water_temp=26.0, headroom_w=headroom,
-                     band="F1"), memory(now)
+        return state(now, water_temp=26.0, headroom_w=headroom, band="F1",
+                     grid_day_topup=False), memory(now)
 
     def test_five_minute_pulse_does_not_start_the_pdc(self):
         st, mem = self.sunny()
@@ -506,3 +541,103 @@ class TestCriterion10RestartDuringGrid:
                              grid_heating=True, in_grid_window=True,
                              solar_ok=False)
         assert mem.pdc_state == expected
+
+
+# --- §5.4 amendment, owner-confirmed 2026-09-17 ------------------------------
+
+class TestDaytimeGridTopUp:
+    """GRID inside the SOLAR window when the sun is not there.
+
+    §5.4 proposed it and left it for the owner: the air is 8-10 K warmer by day,
+    so the same thermal kWh costs an estimated 30-45 % less than at 23:00, and
+    F1 and F3 are within a cent of each other. Confirmed 2026-09-17, default ON.
+
+    The daily logic it produces: reach the guaranteed minimum by evening in F1;
+    if that did not happen, the night window is still there as a fallback.
+    """
+
+    def midday(self, water=25.6, band="F1", topup=True, headroom=0.0, day=16):
+        now = at(2026, 9, day, 12, 0)      # inside the 10-18 solar window
+        return state(now, water_temp=water, headroom_w=headroom, band=band,
+                     grid_day_topup=topup), memory(now)
+
+    def test_it_heats_at_midday_with_no_sun(self):
+        st, mem = self.midday()
+        dec, _ = run(st, mem)
+        assert dec.pdc_state == PDC_GRID
+        assert dec.pdc_setpoint == DEFAULT_MIN_TEMP
+
+    def test_the_reason_says_it_is_the_daytime_one(self):
+        """The owner has to be able to tell a top-up from a night run at a
+        glance, because they cost very different amounts."""
+        st, mem = self.midday()
+        dec, mem = run(st, mem)
+        assert "daytime top-up" in dec.reason
+
+    def test_and_keeps_saying_so_while_it_runs(self):
+        """The entry reason scrolls past in one tick. What the owner actually
+        reads, an hour later, is the holding one."""
+        st, mem = self.midday()
+        dec, mem = run(st, mem)
+        dec, _ = run(st.with_now(st.now + 60 * MIN), mem)
+        assert dec.pdc_state == PDC_GRID
+        assert "daytime top-up" in dec.reason
+
+    def test_the_switch_off_restores_the_night_only_behaviour(self):
+        st, mem = self.midday(topup=False)
+        dec, _ = run(st, mem)
+        assert dec.pdc_state == PDC_OFF
+        assert "outside grid window" in dec.reason
+
+    def test_f2_is_still_refused(self):
+        """The veto that matters. Saturday is F2 from 07:00 to 23:00, so the
+        solar window sits inside the expensive band all day — and the top-up
+        must not become a way in."""
+        st, mem = self.midday(band=BAND_F2, day=19)      # Saturday
+        dec, _ = run(st, mem)
+        assert dec.pdc_state == PDC_OFF
+        assert "band F2" in dec.reason
+
+    def test_free_sun_still_wins(self):
+        """The top-up is a fallback for when SOLAR conditions fail, never a
+        reason to burn grid while the sun is on the panels."""
+        st, mem = self.midday(headroom=4000.0)
+        dec, mem = run_for(st, mem, minutes=11)
+        assert dec.pdc_state == PDC_SOLAR
+        assert dec.pdc_setpoint == st.config.solar_target_temp
+
+    def test_the_sun_takes_over_from_a_running_top_up(self):
+        st, mem = self.midday()
+        dec, mem = run(st, mem)
+        assert dec.pdc_state == PDC_GRID
+        sunny = replace(st, headroom_w=4000.0)
+        dec, _ = run_for(sunny, mem, minutes=12)
+        assert dec.pdc_state == PDC_SOLAR
+
+    def test_it_stops_on_the_same_hysteresis_as_the_night_run(self):
+        st, mem = self.midday()
+        _, mem = run(st, mem)
+        hot = replace(st.with_now(st.now + 60 * MIN), water_temp=27.5)
+        dec, _ = run(hot, mem)
+        assert dec.pdc_state == PDC_OFF
+
+    def test_it_does_not_run_once_the_minimum_is_met(self):
+        st, mem = self.midday(water=27.2)
+        dec, _ = run(st, mem)
+        assert dec.pdc_state == PDC_OFF
+
+    def test_outside_both_windows_nothing_changes(self):
+        """08:00 is inside the pump window but outside solar (10-18) and outside
+        the night grid window — no top-up there."""
+        now = at(2026, 9, 16, 8, 30)
+        st = state(now, water_temp=25.6, headroom_w=0.0, band="F1")
+        dec, _ = run(st, memory(now))
+        assert dec.pdc_state == PDC_OFF
+
+    def test_the_night_window_is_untouched(self):
+        """The fallback §5.4 keeps: still GRID at 23:00 in F3."""
+        now = at(2026, 9, 16, 23, 0)
+        st = state(now, water_temp=25.6, headroom_w=0.0, band=BAND_F3)
+        dec, _ = run(st, memory(now))
+        assert dec.pdc_state == PDC_GRID
+        assert "grid window" in dec.reason

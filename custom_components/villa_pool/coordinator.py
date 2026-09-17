@@ -30,6 +30,7 @@ from .const import (
     CONF_OUTDOOR_TEMP,
     CONF_PDC_AIR_TEMP,
     CONF_PDC_CLIMATE,
+    CONF_PDC_ENERGY,
     CONF_PDC_FAULT,
     CONF_PDC_POWER,
     CONF_PDC_RUNNING,
@@ -156,6 +157,10 @@ class VillaPoolCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "pdc_fault": self.onoff(CONF_PDC_FAULT) is True,
             "pdc_available": self.available(CONF_PDC_CLIMATE),
             "pdc_power": self.num(CONF_PDC_POWER),
+            # Cumulative kWh on phase A. Read for the §5.4 session log, which
+            # brackets it across a heating run; nothing in the control law uses
+            # it.
+            "pdc_energy": self.num(CONF_PDC_ENERGY),
             "pdc_air_temp": self.num(CONF_PDC_AIR_TEMP),
             # chlorinator
             "chlorine_switch": self.onoff(CONF_CHLORINATOR_SWITCH),

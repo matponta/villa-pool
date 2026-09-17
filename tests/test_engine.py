@@ -644,9 +644,14 @@ async def test_the_solar_setpoint_is_the_solar_target(hass: HomeAssistant) -> No
         await go_live(hass)
         await tick(hass, times=13, freezer=frozen)   # past the 10 min dwell
         assert hass.states.get("sensor.pool_pdc_state").state == PDC_SOLAR
-    temps = writes(calls, "climate", "set_temperature")
+    # The water starts below the guaranteed minimum, so the daytime top-up
+    # (§5.4, on by default since v0.5.0) heats on GRID at 27.0 first and hands
+    # over when the dwell completes. What this test is about is that SOLAR ends
+    # up on its own target rather than inheriting the grid one.
+    temps = [t["service_data"]["temperature"]
+             for t in writes(calls, "climate", "set_temperature")]
     assert temps
-    assert temps[0]["service_data"]["temperature"] == DEFAULT_SOLAR_TARGET_TEMP
+    assert temps[-1] == DEFAULT_SOLAR_TARGET_TEMP
 
 
 async def test_reaching_the_target_writes_hvac_mode_off(hass: HomeAssistant) -> None:
@@ -1011,6 +1016,118 @@ async def test_a_restart_inside_the_hysteresis_band_keeps_protecting(
     assert DEFAULT_PUMP_SWITCH in entities_of(writes(calls, "switch", "turn_on"))
 
 
+# --- v0.5.0: daytime grid top-up + the session log ---------------------------
+
+async def test_the_day_topup_switch_is_on_by_default(hass: HomeAssistant) -> None:
+    """§5.4 said "default ON if the owner confirms". They confirmed."""
+    await setup_pool(hass)
+    assert hass.states.get("switch.pool_grid_day_topup").state == "on"
+
+
+async def test_midday_with_cold_water_and_no_sun_heats_from_the_grid(
+    hass: HomeAssistant,
+) -> None:
+    with freeze_time("2026-09-16 12:00:00+02:00") as frozen:
+        await setup_pool(hass, pdc_temperature=29.0, **{
+            DEFAULT_WATER_TEMP: "25.6",
+            "sensor.solar_headroom_for_heater": "0",
+            DEFAULT_TARIFF_BAND: "F1",
+        })
+        mock_climate(hass)
+        calls = record_calls(hass)
+        await go_live(hass)
+        await tick(hass, times=3, freezer=frozen)
+        assert hass.states.get("sensor.pool_pdc_state").state == PDC_GRID
+        assert "daytime top-up" in hass.states.get(
+            "sensor.pool_supervisor_reason"
+        ).state
+    temps = [t["service_data"]["temperature"]
+             for t in writes(calls, "climate", "set_temperature")]
+    assert temps and temps[0] == DEFAULT_MIN_TEMP
+
+
+async def test_turning_the_day_topup_off_restores_night_only_heating(
+    hass: HomeAssistant,
+) -> None:
+    with freeze_time("2026-09-16 12:00:00+02:00") as frozen:
+        await setup_pool(hass, **{
+            DEFAULT_WATER_TEMP: "25.6",
+            "sensor.solar_headroom_for_heater": "0",
+            DEFAULT_TARIFF_BAND: "F1",
+        })
+        mock_climate(hass)
+        await hass.services.async_call(
+            "switch", "turn_off",
+            {"entity_id": "switch.pool_grid_day_topup"}, blocking=True,
+        )
+        await go_live(hass)
+        await tick(hass, times=3, freezer=frozen)
+        assert hass.states.get("sensor.pool_pdc_state").state == "off"
+
+
+async def test_saturday_midday_is_still_refused(hass: HomeAssistant) -> None:
+    """The veto that matters: Saturday is F2 from 07:00 to 23:00, so the solar
+    window sits inside the expensive band all day."""
+    with freeze_time("2026-09-19 12:00:00+02:00") as frozen:
+        await setup_pool(hass, **{
+            DEFAULT_WATER_TEMP: "25.6",
+            "sensor.solar_headroom_for_heater": "0",
+            DEFAULT_TARIFF_BAND: "F2",
+        })
+        mock_climate(hass)
+        await go_live(hass)
+        await tick(hass, times=3, freezer=frozen)
+        assert hass.states.get("sensor.pool_pdc_state").state == "off"
+        assert "band F2" in hass.states.get(
+            "sensor.pool_supervisor_reason"
+        ).state
+
+
+async def test_the_session_sensors_start_unknown(hass: HomeAssistant) -> None:
+    """A session is published only when the supervisor saw BOTH its ends."""
+    await setup_pool(hass)
+    await tick(hass, times=2)
+    assert hass.states.get("sensor.pool_last_session_cop").state == "unavailable"
+
+
+async def test_a_completed_night_run_is_logged_with_its_cop(
+    hass: HomeAssistant, caplog
+) -> None:
+    """End to end: a grid night starts, the water rises, the meter moves, the
+    run ends — and what comes out is comparable with the owner's own
+    measurement of 16->17/9."""
+    import logging
+    caplog.set_level(logging.INFO)
+    with freeze_time("2026-09-16 23:00:00+02:00") as frozen:
+        await setup_pool(hass, pdc_temperature=DEFAULT_MIN_TEMP, **{
+            DEFAULT_WATER_TEMP: "26.2",
+            DEFAULT_TARIFF_BAND: "F3",
+            "sensor.shellypro3em63_a4f00fcd881c_phase_a_energy": "100.0",
+            "sensor.pool_pdc_temp_ambiente": "18.0",
+        })
+        mock_climate(hass)
+        await go_live(hass)
+        await tick(hass, times=2, freezer=frozen)
+        assert hass.states.get("sensor.pool_pdc_state").state == PDC_GRID
+        # The night runs out: at 07:00 the grid window closes and the run ends
+        # on its own, which is how most of them will really end. The water and
+        # the meter have both moved by the same amounts the owner measured.
+        frozen.tick(timedelta(hours=8))
+        hass.states.async_set(DEFAULT_WATER_TEMP, "26.7")
+        hass.states.async_set(
+            "sensor.shellypro3em63_a4f00fcd881c_phase_a_energy", "118.6"
+        )
+        await tick(hass, times=2, freezer=frozen)
+    cop = hass.states.get("sensor.pool_last_session_cop")
+    assert float(cop.state) == pytest.approx(2.82, abs=0.05)
+    assert cop.attributes["clean"] is True
+    assert cop.attributes["delta_t"] == pytest.approx(0.5, abs=0.01)
+    assert float(
+        hass.states.get("sensor.pool_last_session_air_temp").state
+    ) == pytest.approx(18.0, abs=0.1)
+    assert "SESSION" in caplog.text
+
+
 # --- the reason surface ------------------------------------------------------
 
 async def test_reason_sensor_explains_every_actuator(hass: HomeAssistant) -> None:
@@ -1161,6 +1278,7 @@ async def test_story_section_4_entity_ids(hass: HomeAssistant) -> None:
         "switch.pool_maintenance",
         "switch.pool_chlorine_target_control",
         "switch.pool_dry_run",
+        "switch.pool_grid_day_topup",
         # sensors
         "sensor.pool_supervisor_reason",
         "sensor.pool_pdc_state",
@@ -1169,6 +1287,9 @@ async def test_story_section_4_entity_ids(hass: HomeAssistant) -> None:
         "sensor.pool_volume_today",
         "sensor.pool_chlorine_hours_missing",
         "sensor.pool_cover_closed_for",
+        "sensor.pool_last_session_cop",
+        "sensor.pool_last_session_air_temp",
+        "sensor.pool_last_session_energy",
         "binary_sensor.pool_solar_ok",
     ):
         assert hass.states.get(entity_id) is not None, entity_id

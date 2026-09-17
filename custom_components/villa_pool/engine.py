@@ -31,6 +31,7 @@ from homeassistant.util import dt as dt_util
 from .actuator import Actuator
 from .const import (
     DEFAULT_ANTIFREEZE_OFF_C,
+    DEFAULT_GRID_DAY_TOPUP,
     DEFAULT_ANTIFREEZE_ON_C,
     DEFAULT_ANTIFREEZE_SPEED,
     DEFAULT_COVER_CHLORINE_FACTOR,
@@ -56,6 +57,8 @@ from .const import (
     DEFAULT_WINTER_START,
     GRID_FORBIDDEN_BANDS,
     MODE_AUTO,
+    PDC_GRID,
+    PDC_SOLAR,
     PDC_STATES,
 )
 from .supervisor import (
@@ -63,10 +66,13 @@ from .supervisor import (
     Memory,
     PoolConfig,
     PoolState,
+    Session,
+    SessionResult,
     Windows,
     decide,
     in_window,
     restore_memory,
+    session_step,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -96,6 +102,12 @@ class SupervisorEngine:
         self._stopped = False
         self._was_live: bool | None = None
         self.actuator = Actuator(hass, entry, coordinator)
+        # The §5.4 heating-session log. `last_session` is what the sensors
+        # publish; it stays None until the first run COMPLETES, because half a
+        # session has a start reading nobody took.
+        self.session: Session | None = None
+        self.last_session: SessionResult | None = None
+        self._pdc_was_running = False
         # Entities that display the decision subscribe here. The coordinator's
         # own listeners fire BEFORE this engine's background tick completes, so
         # a sensor driven by the coordinator alone would always publish the
@@ -228,6 +240,7 @@ class SupervisorEngine:
             pool_in_use=bool(data.get("pool_in_use")),
             maintenance=bool(v("maintenance", False)),
             grid_heating=bool(v("grid_heating", True)),
+            grid_day_topup=bool(v("grid_day_topup", DEFAULT_GRID_DAY_TOPUP)),
             chlorine_target_control=bool(v("chlorine_target_control", True)),
             volume_today_m3=float(data.get("volume_today_m3") or 0.0),
         )
@@ -266,10 +279,49 @@ class SupervisorEngine:
             decision, self.memory = decide(state, self.memory)
             self.decision = decision
             self.last_state = state
+            self._log_session(state, decision)
             self._log_intent(decision)
             self._notify()
             live = self._announce_mode()
             await self.actuator.async_apply(decision, state.mono, live=live)
+
+    def _log_session(self, state: PoolState, decision: Decision) -> None:
+        """Bracket each heating run and record what it cost (STORY §5.4).
+
+        Bracketed by the SUPERVISOR's state rather than `pool_pdc_acceso`: the
+        machine's own flag is cloud-polled and flickers, and a flicker would
+        chop one run into several. The decision state holds through a polling
+        gap, which is exactly the bracket an energy measurement wants.
+        """
+        data = self.coordinator.data or {}
+        w = state.config.windows
+        running = decision.pdc_state in (PDC_SOLAR, PDC_GRID)
+        self.session, finished = session_step(
+            self.session,
+            now=state.mono,
+            running=running,
+            was_running=self._pdc_was_running,
+            mode=decision.pdc_state,
+            water=state.water_temp,
+            energy=data.get("pdc_energy"),
+            air=state.air_temp,
+            cover_closed=state.cover_closed,
+            in_night_window=in_window(
+                state.now, w.pdc_grid_start, w.pdc_grid_end
+            ),
+        )
+        self._pdc_was_running = running
+        if finished is None:
+            return
+        self.last_session = finished
+        _LOGGER.info(
+            "SESSION %s %.0f min · water %s -> %s (%s K) · %s kWh · air %s °C "
+            "· COP %s%s",
+            finished.mode, finished.minutes, finished.water_start,
+            finished.water_end, finished.delta_t, finished.energy_kwh,
+            finished.air_mean, finished.cop or "—",
+            f" · {finished.note}" if finished.note else "",
+        )
 
     def _dry_run(self) -> bool:
         return bool(self._entity_value("dry_run", True))

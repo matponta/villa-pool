@@ -48,6 +48,13 @@ FLAGS: tuple[Flag, ...] = (
         "one). Never in the F2 band, whatever this says.",
     ),
     Flag(
+        "grid_day_topup", "Grid day topup", True, "mdi:weather-sunny-alert",
+        "Allow the PdC to heat from the grid INSIDE the solar window when the "
+        "sun is not there (STORY §5.4, owner-confirmed 2026-09-17). The air is "
+        "8-10 K warmer by day, so the same thermal kWh costs 30-45 % less than "
+        "at 23:00. Never in F2, whatever this says.",
+    ),
+    Flag(
         "chlorine_target_control", "Chlorine target control", True,
         "mdi:test-tube",
         "OFF: the chlorinator follows its window only and ignores the daily "

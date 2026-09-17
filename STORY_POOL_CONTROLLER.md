@@ -254,7 +254,19 @@ model until more sessions are logged.
   the cost of a longer run — a manual experiment for the owner, not a
   controller feature.
 
-**Consequence for GRID — PROPOSED, owner to confirm.** The 23–07 GRID window
+**Consequence for GRID — CONFIRMED by the owner 2026-09-17, shipped in v0.5.0.**
+`switch.pool_grid_day_topup` exists and defaults ON. It allows GRID inside the
+SOLAR window when SOLAR conditions fail; the night window stays as the fallback
+and the F2 veto is untouched (which is what keeps Saturday daytime out, since
+Sat is F2 from 07:00 to 23:00). Replayed over a September day: the marginal cost
+is **0.0501 vs 0.0659 €/kWh_th, 24 % cheaper by day** — consistent with the
+30-45 % estimated below, which assumed colder October nights. It costs one extra
+compressor start a day, not a string of them. **It also roughly doubles the daily
+spend**, because the pool now reaches and holds the minimum instead of drifting
+below it: cheaper per kWh, more kWh. Acceptance criterion §7.1 changes as a
+result — see the note there.
+
+**Original proposal, for the record.** The 23–07 GRID window
 was chosen for "F3 + covered". With F1 ≈ F3 in price and ~8–10 K warmer air by
 day, a grid top-up in F1 costs an estimated 30–45 % less per thermal kWh than
 the same top-up at night (e.g. Oct: 0.166/2.0 = 0.083 vs 0.164/3.5 = 0.047
@@ -316,6 +328,12 @@ expires by itself after 4 h, where `closed` lasts months.
 1. With the 16/9 17:25 snapshot (water 25.6, headroom 0 W, 17:25, F1 on a
    weekday, pool_in_use on) the PdC is OFF (not in a window / no solar), the
    pump is ON at 80 % (pool_in_use), chlorine enabled.
+   **AMENDED 2026-09-17 by the §5.4 confirmation**: 17:25 on a weekday is F1 and
+   inside the solar window, with the water 1.4 K below the minimum — so with
+   `grid_day_topup` ON (the default) the right answer is now GRID at the minimum
+   setpoint, not OFF. The criterion as originally written is still pinned, with
+   the switch off, in `TestCriterion01SnapshotOf16September`; the amended
+   behaviour is pinned beside it and in `TestDaytimeGridTopUp`.
 2. Same day 23:00 (F3, grid window, grid_heating on): PdC → GRID, setpoint 27;
    at 27.5 → OFF; pump post-run 5 min then follows other demand.
 3. A 3 kW headroom pulse of 5 min does not start the PdC; 10 min does; a 12 min

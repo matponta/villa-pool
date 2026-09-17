@@ -107,6 +107,52 @@ know whether antifreeze was running; answering "no" stops the pump mid-cold-snap
 answering "yes" costs ~22 W until the air passes +2. Same asymmetry
 `antifreeze_step` already applies to an unknown temperature.
 
+### The daytime grid top-up (§5.4, owner-confirmed 2026-09-17)
+
+`switch.pool_grid_day_topup` (default ON) lets GRID run inside the **solar**
+window when SOLAR conditions fail. `pdc.grid_window()` is the one place that
+decides which window authorises a grid run, and returns `night` or `day` so the
+reason line can name it — both on entry AND while it holds, because the entry
+reason scrolls past in one tick and these two cost very different amounts.
+
+The band veto is untouched and is what makes this safe: Saturday is F2 from
+07:00 to 23:00, so the solar window sits inside the expensive band all day and
+the top-up cannot become a way in.
+
+**It roughly doubles the daily spend.** Measured by replaying a September day:
+the marginal cost is 24 % lower by day (0.0501 vs 0.0659 €/kWh_th) and it costs
+one extra compressor start, but the pool now *reaches and holds* the minimum
+instead of drifting below it — so it delivers about twice the heat. Cheaper per
+kWh, more kWh. If the bill is the complaint, the lever is the switch.
+
+### The heating-session log (§5.4)
+
+`supervisor/session.py` brackets each heating run and records what it cost, so
+the COP model can eventually be **fitted** rather than guessed. Three sensors —
+COP, mean air, electrical kWh — because a fit needs COP against air temperature
+as two recorded series, and an attribute is awkward to graph.
+
+The arithmetic is the owner's own: `90 m³ × 1.163 × ΔT` thermal over the phase-A
+kWh. The night of 16→17/9 comes back as 2.81 against the 2.82 recorded in §1,
+which is the check that the log is comparable with the one measurement the model
+rests on (`TestTheMeasuredNightReproduces`).
+
+Two rules keep it honest, and both matter more than completeness:
+
+- **It refuses to invent a COP.** Too short, ΔT inside the probe's 0.1 °C
+  resolution, a missing reading, a meter that did not move — each publishes the
+  session with `cop` unset and a `note` saying which. This exists to be fitted;
+  a wrong point is worse than no point, because it would be believed.
+- **Only night sessions are `clean`.** §5.4: daytime runs are contaminated by
+  solar gain on the pool, and the compressor would take the credit. `all_night`
+  is ANDed every tick, so a run that crosses sunrise is disqualified — which now
+  matters, because the day top-up makes daytime GRID runs ordinary.
+
+It brackets on the SUPERVISOR's state, not `pool_pdc_acceso`: the machine's own
+flag is cloud-polled and flickers, and a flicker would chop one run into several.
+A run already going at startup is not adopted — its start reading was never
+taken.
+
 ### The PdC is the lever that can be damaged by being asked twice
 
 It gets three protections the others do not:
@@ -299,8 +345,15 @@ These are recorded rather than silently resolved:
    trade is the owner's, not an engineering call. Unlike the GRID hysteresis bug
    (which was a real defect — the band existed and was being ignored), this is
    the spec working as written.
-5. **§5.4's daytime GRID top-up is NOT implemented** — it is explicitly marked
-   "PROPOSED, owner to confirm". `switch.pool_grid_day_topup` does not exist.
+5. ~~**§5.4's daytime GRID top-up is NOT implemented.**~~ **CONFIRMED by the
+   owner and shipped in v0.5.0**: `switch.pool_grid_day_topup`, default ON. See
+   *The daytime grid top-up* below. It amends acceptance criterion §7.1, which
+   is recorded in the STORY rather than quietly dropped.
+6. **`sensor.pool_last_session_*` was specified and never built** — §4 lists it
+   and §5.4 explains why it matters, and it was missing from v0.1.0 through
+   v0.4.0 without ever being recorded as a gap. Shipped in v0.5.0. Worth
+   remembering as a class of bug: the things §4 lists are easy to check off by
+   eye and easy to miss one of.
 
 ## Dev / deploy
 
