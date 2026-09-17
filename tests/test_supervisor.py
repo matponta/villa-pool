@@ -394,3 +394,43 @@ class TestAdversarialRegressions:
                    pool_in_use=True, chlorine_hours_today=0.0)
         dec, _ = decide(st, memory(now))
         assert len(dec.reason) <= 255
+
+    def test_a_grid_run_does_not_stop_at_min_temp(self):
+        """The hysteresis band must survive the run.
+
+        `grid_conditions` is consulted both to START and to CONTINUE. Using the
+        start threshold (water < min_temp) for the continue test ended the run
+        the moment the water touched 27.0 — it then drifted back below within
+        MIN_OFF and restarted, giving ~14 compressor starts overnight instead of
+        2. Found by simulating a full September day before the v0.1.0 tag.
+        """
+        now = at(2026, 9, 16, 23, 0)
+        st = state(now, water_temp=25.6, band=BAND_F3, grid_heating=True)
+        dec, mem = decide(st, memory(now))
+        assert dec.pdc_state == PDC_GRID
+        # Water climbs past min_temp but not yet past the hysteresis: keep going.
+        for water in (26.9, 27.0, 27.1, 27.4):
+            dec, mem = decide(
+                replace(st.with_now(now + 30 * MIN), water_temp=water), mem
+            )
+            assert dec.pdc_state == PDC_GRID, f"stopped early at {water}"
+        # And only at min_temp + 0.5 does it stop.
+        dec, mem = decide(
+            replace(st.with_now(now + 60 * MIN), water_temp=27.5), mem
+        )
+        assert dec.pdc_state == PDC_OFF
+
+    def test_a_night_of_grid_heating_is_not_a_short_cycle(self):
+        """End to end: one night, counting compressor starts."""
+        now = at(2026, 9, 16, 23, 0)
+        mem = memory(now)
+        water, starts, prev = 25.6, 0, PDC_OFF
+        for i in range(0, 8 * 60, 5):          # 23:00 -> 07:00
+            st = state(now + i * MIN, water_temp=round(water, 1), band=BAND_F3,
+                       grid_heating=True, headroom_w=0.0)
+            dec, mem = decide(st, mem)
+            if dec.pdc_state == PDC_GRID and prev != PDC_GRID:
+                starts += 1
+            prev = dec.pdc_state
+            water += 0.08 if dec.pdc_state == PDC_GRID else -0.015
+        assert starts <= 3, f"{starts} compressor starts in one night"

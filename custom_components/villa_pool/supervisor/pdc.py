@@ -80,8 +80,18 @@ def solar_conditions(state: PoolState, mem: Memory) -> bool:
     )
 
 
-def grid_conditions(state: PoolState) -> tuple[bool, str | None]:
+def grid_conditions(
+    state: PoolState, *, running: bool = False
+) -> tuple[bool, str | None]:
     """Would GRID be justified right now? Returns (ok, refusal reason).
+
+    `running` selects which side of the hysteresis band the water test uses,
+    and IT IS LOAD-BEARING (STORY §5.2: start below `min_temp`, stop at
+    `min_temp + 0.5`). Applying the start threshold to a running machine kills
+    the band: the run ends the moment the water touches 27.0, drifts back below
+    within MIN_OFF, and restarts — an overnight short-cycle of roughly one start
+    every 25 min, which is exactly what MIN_ON/MIN_OFF exist to prevent. Caught
+    by simulating a full September day before the v0.1.0 tag.
 
     The refusal reason is what surfaces on `sensor.pool_supervisor_reason`, so
     §7.4's "`reason` says `band F2`" is satisfied by the band branch below.
@@ -96,8 +106,9 @@ def grid_conditions(state: PoolState) -> tuple[bool, str | None]:
         return False, "outside grid window"
     if state.band in GRID_FORBIDDEN_BANDS:
         return False, f"band {state.band}"
-    if state.water_temp >= state.config.min_temp:
-        return False, "water at min temp"
+    limit = state.config.min_temp + (MIN_TEMP_HYSTERESIS if running else 0.0)
+    if state.water_temp >= limit:
+        return False, "min temp reached" if running else "water at min temp"
     return True, None
 
 
@@ -179,12 +190,9 @@ def pdc_step(
     if current == PDC_GRID:
         if solar_ok_now:
             return _enter(mem, now, PDC_SOLAR, "solar took over from grid", cfg)
-        if state.water_temp is not None and state.water_temp >= (
-            cfg.min_temp + MIN_TEMP_HYSTERESIS
-        ):
-            return _stop(mem, now, "min temp reached", cfg)
-        if not grid_ok_now:
-            return _stop(mem, now, grid_refusal or "grid no longer allowed", cfg)
+        keep_ok, keep_refusal = grid_conditions(state, running=True)
+        if not keep_ok:
+            return _stop(mem, now, keep_refusal or "grid no longer allowed", cfg)
         return _hold(mem, PDC_GRID, "heating on grid", cfg)
 
     # --- transitions out of OFF ----------------------------------------------

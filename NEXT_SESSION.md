@@ -11,7 +11,7 @@ is shared with `villa-hvac` at runtime.
 PdC 4-state machine, chlorine-to-target, §5.5 priority ladder, COP model) plus
 the whole HA surface: a config flow with an entity picker per §2 input, 17
 `number.*` settings, 10 `time.*` windows, `select.pool_mode`, four switches, and
-the diagnostic sensors. **129 tests**, green against the exact deploy target
+the diagnostic sensors. **131 tests**, green against the exact deploy target
 (HA 2026.8.3 via `pytest-homeassistant-custom-component==0.13.357`).
 
 **What did NOT ship: any ability to write.** There is no
@@ -29,7 +29,7 @@ these levers + retire the old automations" rather than "write the law". If the
 owner wanted the law itself deferred, v0.1.0 is bigger than intended — but the
 24 h dry run would then have had nothing to compare.
 
-### Pre-tag adversarial review — three real defects found and fixed
+### Pre-tag adversarial review — four real defects found and fixed
 
 1. **`filtration_only` left a phantom run in Memory.** The mode was enforced by
    overwriting the *answer* after `pdc_step` had already advanced Memory into
@@ -41,7 +41,18 @@ owner wanted the law itself deferred, v0.1.0 is bigger than intended — but the
 2. **A cover closed for exactly 0.0 h read as `unknown`** (falsy-vs-None in
    `CoverClosedForSensor`). Cosmetic, but it would have made the sensor look
    broken at the moment the cover shut.
-3. **Every entity id was wrong.** Under `has_entity_name` the id prefix comes
+3. **The PdC short-cycled all night.** `grid_conditions` is consulted both to
+   START a run and to CONTINUE one, and it used the start threshold
+   (`water < min_temp`) for both — so the run ended the moment the water touched
+   27.0, drifted back below within MIN_OFF, and restarted. A simulated September
+   night gave **~14 compressor starts instead of 2**, which is precisely the
+   damage MIN_ON/MIN_OFF exist to prevent, and it would have been invisible in
+   the dry run except as noise in the log. Found by replaying a full day through
+   the law offline before tagging — not by any test, because every test asserted
+   a single transition rather than a day's worth. `grid_conditions` now takes
+   `running` and selects the correct side of the hysteresis band; two regression
+   tests, one of which counts starts across a whole night.
+4. **Every entity id was wrong.** Under `has_entity_name` the id prefix comes
    from the *device* name, so the entities landed as
    `switch.villa_pool_dry_run` / `sensor.villa_pool_supervisor_reason` while
    STORY §4 specifies `switch.pool_dry_run` / `sensor.pool_supervisor_reason` —
