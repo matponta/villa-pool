@@ -195,7 +195,15 @@ MAINTENANCE_AUTO_OFF_S: Final = 4 * 3600
 # which is also what enforces §6's "never write hvac_mode more than once per
 # MIN_ON/MIN_OFF window", MIN_OFF being 15 min.
 SETTLE_LOCAL_S: Final = 120
-SETTLE_PDC_S: Final = PDC_STALE_GRACE_S
+# The PdC's hvac_mode is the one that cycles a compressor, so it gets the full
+# grace — which is also what enforces §6's "never write hvac_mode more than once
+# per MIN_ON/MIN_OFF window", MIN_OFF being 15 min.
+SETTLE_PDC_MODE_S: Final = PDC_STALE_GRACE_S
+# The setpoint cycles nothing, and a machine that ignored it (some controllers
+# refuse a target while off) should not be left on the wrong one for a quarter
+# of an hour. 10 min is the bottom of §5.2's own "judge nothing for 10-15 min"
+# range and two cloud-poll intervals, so a re-read is genuinely post-command.
+SETTLE_PDC_SETPOINT_S: Final = 600
 # A single write may not hold the engine's lock longer than this. A cloud lever
 # that never answers would otherwise make the supervisor deaf for every tick
 # after it, which is a far worse failure than one missed command.
