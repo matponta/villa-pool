@@ -74,7 +74,7 @@ Measured live; do not re-derive them (see `CLAUDE.md`):
 
 ## Tests
 
-125 tests, all pure-fast except the end-to-end ones, which run against the exact
+131 tests, all pure-fast except the end-to-end ones, which run against the exact
 deploy-target HA.
 
 ```bash
