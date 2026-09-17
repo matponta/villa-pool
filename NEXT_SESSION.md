@@ -85,10 +85,53 @@ to `False`/`0` on any input; unload releases nothing.
 HACS custom repository → install v0.1.0 → restart → add the integration →
 confirm the pickers → assign the *pool* area. Then leave it alone for 24 h.
 
-**What to verify** — see the list handed to the owner with this release; the
-short version is: the reason line always matches what the pool is actually
-doing, the PdC intent never flickers across a cloud-polling gap, and the pump
-intent tracks `pool_pompa_in_marcia` with the expected 60 s confirmation.
+First turn on INFO logging for the engine, or there is nothing to compare:
+
+```yaml
+logger:
+  logs:
+    custom_components.villa_pool: info
+```
+
+**What to verify, in rough priority order.**
+
+1. **Nothing moved.** In the logbook for `switch.pompa_piscina`,
+   `switch.clorinatore` and `climate.pool_pdc_piscina`, every state change over
+   the 24 h must be attributable to an existing automation or to a human.
+   `villa_pool` must appear nowhere. This is the release's core claim.
+2. **The PdC never "changes state" across a cloud-polling gap.** Watch
+   `sensor.pool_pdc_state`: its `write_allowed` attribute goes `false` whenever
+   `climate.pool_pdc_piscina` is `unavailable`, and the state itself must NOT
+   move during those gaps. This is the single most important behaviour to
+   confirm, because it is the one that would cause double compressor starts
+   once v0.2.0/v0.3.0 actuate.
+3. **The night grid run is ONE run, not a sawtooth.** From 23:00, if the water
+   is below 27.0 and the band is F3, `sensor.pool_pdc_state` should read `grid`
+   continuously until the water reaches 27.5 — then `off`. Counting more than
+   2-3 grid episodes in a night means the hysteresis regressed (see the v0.1.0
+   review: that bug was real and is now tested).
+4. **No grid intent in F2 ever** — 07:00-08:00 and 19:00-23:00 on weekdays,
+   07:00-23:00 on Saturday. The reason line should say `band F2` if anything
+   else would have wanted it.
+5. **Pump intent tracks the window and the confirmation.** `would_pump_on`
+   true across 08:00-20:00; `pump_confirmed` in the attributes turns true ~60 s
+   after `binary_sensor.pool_pompa_in_marcia` goes on, not immediately.
+6. **`binary_sensor.pool_solar_ok` does not flap.** ON only after 10 min above
+   3000 W, OFF promptly below 2500 W. If it toggles more than a handful of times
+   on a partly-cloudy day, the thresholds need revisiting before v0.3.0.
+7. **Chlorine accounting.** `sensor.pool_chlorine_hours_missing` counts down as
+   `sensor.salt_chlorinator_runtime_today` rises, and `would_chlorine_on` goes
+   false at 8 h. It WILL disagree with
+   `automation.pool_chlorinator_daily_3h_run` (12:00, 6 h) — that is expected,
+   and that automation is what v0.2.0 retires.
+8. **`sensor.pool_volume_today`** climbs ~8 m³/h while the pump runs at 80 %,
+   its `turnovers` attribute ≈ volume/90, and it resets at midnight.
+9. **`sensor.pool_cop_stimato`** ~2.8 in ~18 °C night air, ~3.5-3.8 in warm
+   afternoon air. Diagnostic only — just check it is not absurd.
+10. **Restart HA once** mid-run and confirm the settings come back and
+    `sensor.pool_pdc_state` is re-derived rather than reset to `off`.
+11. **Log volume.** A handful of `DRY-RUN` lines per day, each with a reason.
+    Dozens means something is flapping — that is a finding, not noise.
 
 ### Kickstart prompt for the next session
 
