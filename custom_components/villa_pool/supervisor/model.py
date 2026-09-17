@@ -126,6 +126,10 @@ class PoolState:
     pool_in_use: bool = False
     maintenance: bool = False
     grid_heating: bool = True            # §3: allowed from day one
+    # §5.4, confirmed by the owner 2026-09-17: also allow GRID inside the SOLAR
+    # window when the sun is not there. The air is 8-10 K warmer by day, so the
+    # same thermal kWh costs 30-45 % less than at night — and F1 ~ F3 in price.
+    grid_day_topup: bool = True
     chlorine_target_control: bool = True
     volume_today_m3: float = 0.0
 

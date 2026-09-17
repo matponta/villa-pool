@@ -1,0 +1,83 @@
+# Cards for v0.5.0. NOT YET APPLIED — unlike dashboard_v0.4.0_cards.yaml, these
+# reference entities that do not exist on the live system until v0.5.0 is
+# installed. Apply them after the upgrade, or they render as "entity not
+# available".
+#
+# ENTITY IDS: live ids carry the device name, so `pool_poolbrain_*`. See
+# CLAUDE.md → "The live entity ids are not the §4 ids".
+
+# 1 · Settings section, next to the other PdC switches.
+- type: tile
+  entity: switch.pool_poolbrain_grid_day_topup
+  name: Rabbocco diurno da rete (F1)
+  icon: mdi:weather-sunny-alert
+  color: amber
+  grid_options:
+    columns: 12
+    rows: 1
+
+# 2 · Diagnostics — the §5.4 session log. This is the surface that turns the COP
+#     model from a guess into something fittable, so it is worth its own block.
+- type: markdown
+  grid_options:
+    columns: full
+    rows: auto
+  content: >-
+    {% set c = 'sensor.pool_poolbrain_last_session_cop' %}{% if
+    states(c) not in ['unknown','unavailable','none'] or
+    state_attr(c,'minutes') %}**Ultima sessione di riscaldamento** — {{
+    state_attr(c,'mode') | upper }} · {{ state_attr(c,'minutes') }} min · acqua
+    {{ state_attr(c,'water_start') }} → {{ state_attr(c,'water_end') }} °C ({{
+    state_attr(c,'delta_t') }} K) · {{ state_attr(c,'energy_kwh') }} kWh · aria
+    {{ state_attr(c,'air_mean') }} °C
+
+    {% if states(c) not in ['unknown','unavailable','none'] %}
+
+    **COP misurato {{ states(c) }}**{% if state_attr(c,'clean') %} — sessione
+    notturna, utilizzabile per tarare il modello.{% else %} — ⚠️ diurna: il sole
+    ha fatto parte del lavoro e il compressore se ne prende il merito. È un
+    limite superiore, non una misura.{% endif %}
+
+    {% else %}
+
+    Nessun COP per questa sessione: {{ state_attr(c,'note') or '—' }}.
+
+    {% endif %}{% else %}
+
+    Nessuna sessione ancora registrata. Ne serve una completa — il supervisore
+    deve averne visto sia l'inizio sia la fine.
+
+    {% endif %}
+
+# 3 · Two tiles beside it, so COP and air temperature are both graphable.
+- type: tile
+  entity: sensor.pool_poolbrain_last_session_cop
+  name: COP ultima sessione
+  icon: mdi:gauge-full
+  grid_options:
+    columns: 6
+    rows: 1
+- type: tile
+  entity: sensor.pool_poolbrain_last_session_air_temp
+  name: Aria media ultima sessione
+  icon: mdi:thermometer-lines
+  grid_options:
+    columns: 6
+    rows: 1
+
+# 4 · The fit itself, once there are a few clean points to look at.
+- type: statistics-graph
+  title: COP misurato vs aria (30 g) — solo le sessioni notturne tarano
+  chart_type: scatter
+  period: hour
+  days_to_show: 30
+  stat_types:
+    - mean
+  entities:
+    - entity: sensor.pool_poolbrain_last_session_cop
+      name: COP misurato
+    - entity: sensor.pool_poolbrain_last_session_air_temp
+      name: Aria media
+  grid_options:
+    columns: full
+    rows: 4

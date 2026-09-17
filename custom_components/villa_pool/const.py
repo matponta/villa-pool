@@ -187,6 +187,24 @@ COVER_CLOSED_CHLORINE_CUTOFF_H: Final = 24.0
 # switch.pool_maintenance freezes all actuation and auto-releases after this.
 MAINTENANCE_AUTO_OFF_S: Final = 4 * 3600
 
+# --- Heating-session log (§5.4) ----------------------------------------------
+# Water: 1 m3 lifted by 1 K costs 1.163 kWh. The owner's own night measurement
+# is 90 m3 x 1.163 x 0.5 K = 52.3 kWh_th against ~18.6 kWh_el = COP 2.82, which
+# is the single point the whole COP model rests on — so a session logged with
+# this constant is directly comparable with it.
+KWH_PER_M3_K: Final = 1.163
+# Below these a session is logged but no COP is computed: the probe reads to
+# 0.1 °C, so a smaller rise is mostly quantisation, and a short run has not had
+# time to show one at all.
+SESSION_MIN_MINUTES: Final = 20.0
+SESSION_MIN_DELTA_T: Final = 0.2
+
+# --- Daytime grid top-up (§5.4, owner confirmed 2026-09-17) -------------------
+# GRID inside the SOLAR window when the sun is not there. Default ON, as §5.4
+# specified for the case the owner confirmed it. The F2 veto still applies and
+# is what keeps Saturday daytime out.
+DEFAULT_GRID_DAY_TOPUP: Final = True
+
 # --- Actuation (§8 steps 2-3) -------------------------------------------------
 # How long a lever is given to adopt a command before the supervisor judges it.
 # The local levers answer in seconds (tuya-local bridge, Shelly relay), so 2 min
