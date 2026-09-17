@@ -1,0 +1,408 @@
+<title>Manuale PoolBrain</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  :root {
+    --paper: #f6f9f9;
+    --card: #ffffff;
+    --ink: #10242b;
+    --muted: #5d7076;
+    --rule: #ccdbdd;
+    --accent: #0e7c86;
+    --accent-soft: #e2f1f2;
+    --warn: #a85f18;
+    --warn-soft: #fbefe1;
+    --cold: #3a6ba6;
+    --cold-soft: #e7eef8;
+    --stop: #98322b;
+    --stop-soft: #fbeae8;
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #0c1618; --card: #122226; --ink: #e6eeef; --muted: #9db0b5;
+      --rule: #274045; --accent: #4bb8c1; --accent-soft: #163236;
+      --warn: #d9964c; --warn-soft: #30241a; --cold: #86adde; --cold-soft: #182636;
+      --stop: #e08279; --stop-soft: #331d1c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0c1618; --card: #122226; --ink: #e6eeef; --muted: #9db0b5;
+    --rule: #274045; --accent: #4bb8c1; --accent-soft: #163236;
+    --warn: #d9964c; --warn-soft: #30241a; --cold: #86adde; --cold-soft: #182636;
+    --stop: #e08279; --stop-soft: #331d1c;
+  }
+
+  body {
+    background: var(--paper); color: var(--ink);
+    font-family: var(--body); font-size: 16px; line-height: 1.6;
+    padding-inline: 16px; padding-block: 0;
+  }
+  .wrap { max-width: 44rem; margin: 0 auto; padding-block: 3rem 4rem; }
+
+  h1, h2, h3, .eyebrow, th, .tag { font-family: var(--display); }
+  h1 { font-size: 2.1rem; line-height: 1.15; margin: 0 0 .3rem; font-weight: 700;
+       letter-spacing: -.02em; text-wrap: balance; }
+  h2 { font-size: 1.28rem; margin: 0 0 .1rem; font-weight: 700; letter-spacing: -.01em;
+       text-wrap: balance; }
+  h3 { font-size: 1rem; margin: 1.6rem 0 .3rem; font-weight: 600; }
+  p { margin: 0 0 .85rem; }
+  ul, ol { margin: 0 0 .9rem; padding-left: 1.2rem; }
+  li { margin-bottom: .35rem; }
+  code, .mono { font-family: var(--mono); font-size: .85em; }
+  code { background: var(--accent-soft); color: var(--ink);
+         padding: .08em .32em; border-radius: 3px; }
+  strong { font-weight: 600; }
+
+  .eyebrow { font-size: .72rem; letter-spacing: .13em; text-transform: uppercase;
+             color: var(--accent); font-weight: 600; }
+  .lede { font-size: 1.08rem; color: var(--muted); margin-bottom: 0; }
+
+  header.masthead { border-bottom: 2px solid var(--ink); padding-bottom: 1.2rem;
+                    margin-bottom: 2.2rem; }
+  .meta { display: flex; flex-wrap: wrap; gap: .4rem 1.4rem; margin-top: 1rem;
+          font-family: var(--display); font-size: .8rem; color: var(--muted); }
+  .meta b { color: var(--ink); font-weight: 600; }
+
+  /* The numbering is the hydraulic order: water reaches these things in this
+     sequence. It is not decoration. */
+  section { margin-bottom: 2.4rem; }
+  .head { display: flex; gap: .8rem; align-items: baseline;
+          border-top: 1px solid var(--rule); padding-top: 1rem; margin-bottom: .9rem; }
+  .num { font-family: var(--display); font-size: .82rem; font-weight: 700;
+         color: var(--accent); font-variant-numeric: tabular-nums; padding-top: .2rem;
+         min-width: 1.6rem; }
+
+  .note { border-left: 3px solid var(--accent); background: var(--accent-soft);
+          padding: .8rem 1rem; margin: 0 0 1rem; border-radius: 0 4px 4px 0; }
+  .note.warn { border-color: var(--warn); background: var(--warn-soft); }
+  .note.cold { border-color: var(--cold); background: var(--cold-soft); }
+  .note.stop { border-color: var(--stop); background: var(--stop-soft); }
+  .note p:last-child { margin-bottom: 0; }
+  .note .tag { display: block; font-size: .7rem; letter-spacing: .1em;
+               text-transform: uppercase; font-weight: 600; margin-bottom: .3rem; }
+
+  .tbl { overflow-x: auto; margin: 0 0 1.1rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  th, td { text-align: left; padding: .45rem .7rem; border-bottom: 1px solid var(--rule);
+           vertical-align: top; }
+  th { font-size: .74rem; letter-spacing: .07em; text-transform: uppercase;
+       color: var(--muted); font-weight: 600; }
+  td.mono, th.mono { font-family: var(--mono); font-size: .8rem; }
+  td .u { font-variant-numeric: tabular-nums; }
+
+  .ladder { counter-reset: rung; list-style: none; padding: 0; margin: 0 0 1rem; }
+  .ladder li { counter-increment: rung; display: flex; gap: .7rem;
+               padding: .35rem 0; border-bottom: 1px dotted var(--rule); }
+  .ladder li::before { content: counter(rung); font-family: var(--display);
+                       font-weight: 700; color: var(--accent); min-width: 1.1rem;
+                       font-variant-numeric: tabular-nums; }
+
+  footer { border-top: 1px solid var(--rule); margin-top: 2.5rem; padding-top: 1rem;
+           font-size: .82rem; color: var(--muted); }
+
+  @media print {
+    :root { --paper: #fff; --card: #fff; --ink: #111; --muted: #444; --rule: #bbb;
+            --accent-soft: #eef4f5; --warn-soft: #f7f1e8; --cold-soft: #eceff6;
+            --stop-soft: #f7eeed; }
+    @page { size: A4; margin: 16mm; }
+    body { font-size: 10.5pt; padding-inline: 0; }
+    .wrap { max-width: none; padding-block: 0; }
+    section, .note, table { break-inside: avoid; }
+    h2, h3 { break-after: avoid; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">Villa Pontacolone · Manuale d'uso</div>
+    <h1>PoolBrain</h1>
+    <p class="lede">Il supervisore che coordina pompa, pompa di calore e clorinatore
+      come un unico impianto idraulico.</p>
+    <div class="meta">
+      <span><b>Versione</b> villa_pool v0.4.0</span>
+      <span><b>Data</b> 17 settembre 2026</span>
+      <span><b>Dashboard</b> Pool v2 → <span class="mono">pool-overview-v2</span></span>
+    </div>
+  </header>
+
+  <section>
+    <div class="head"><div class="num">§1</div><div><h2>Cosa fa, in un paragrafo</h2></div></div>
+    <p>PoolBrain non sostituisce i controllori delle macchine: la pompa di calore tiene
+      il suo termostato, l'UNIKO decide da sé quando la cella produce. PoolBrain decide
+      <em>quando è lecito</em> che ciascuna cosa funzioni, <em>cosa deve essere raggiunto</em>
+      nella giornata, e <em>cosa non può mai succedere</em>. Ogni 60 secondi guarda sonde,
+      margine fotovoltaico, fascia oraria e stato delle macchine, decide, e — se non è in
+      osservazione — manda i comandi necessari. Niente di più.</p>
+    <p>La regola che tiene insieme tutto: <strong>la pompa segue la domanda</strong>. Non ha
+      un orario proprio da rispettare a tutti i costi; si accende perché qualcuno ha bisogno
+      di portata — la finestra di filtrazione, la pompa di calore, il clorinatore, il bagno,
+      l'antigelo — e va alla più alta delle velocità richieste.</p>
+  </section>
+
+  <section>
+    <div class="head"><div class="num">§2</div><div><h2>L'interruttore che conta</h2></div></div>
+    <p><code>switch.pool_poolbrain_dry_run</code> decide se PoolBrain <em>comanda</em> o si
+      limita a <em>spiegare</em>. Acceso: decide, scrive tutto nel log, non tocca niente.
+      Spento: comanda davvero. Il passaggio da uno all'altro finisce nel log a livello
+      WARNING, così «da quando sta comandando?» ha sempre una risposta.</p>
+    <div class="note">
+      <span class="tag">Dove si legge cosa sta succedendo</span>
+      <p><code>sensor.pool_poolbrain_supervisor_reason</code> è la riga da leggere per prima:
+        dice in una frase perché ogni attuatore è dove è. Subito sotto, sulla dashboard, la
+        scheda <b>Attuazione</b> dice cosa è stato davvero <em>inviato</em> — che non è la
+        stessa cosa.</p>
+    </div>
+    <h3>Le cinque modalità</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>Modalità</th><th>Cosa cambia</th></tr></thead>
+      <tbody>
+        <tr><td><b>auto</b></td><td>Funzionamento normale. PoolBrain è responsabile di pompa, PdC e clorinatore.</td></tr>
+        <tr><td><b>filtration_only</b></td><td>Pompa e cloro come sempre, pompa di calore mai.</td></tr>
+        <tr><td><b>winter</b></td><td>Niente finestra estiva: la pompa parte a mezzogiorno per le ore impostate. PdC bloccata.</td></tr>
+        <tr><td><b>manual</b></td><td>PoolBrain non guida nulla — <em>tranne l'antigelo</em> (§7).</td></tr>
+        <tr><td><b>closed</b></td><td>Piscina chiusa. Come <b>manual</b>, antigelo compreso.</td></tr>
+      </tbody>
+    </table></div>
+    <div class="note warn">
+      <span class="tag">Manutenzione</span>
+      <p><code>switch.pool_poolbrain_maintenance</code> congela <em>tutto</em>, antigelo
+        incluso: si presume che ci sia qualcuno all'impianto, magari svuotato o con le
+        valvole chiuse, e far partire una pompa sotto le sue mani sarebbe un pericolo, non
+        una protezione. Si spegne da solo dopo 4 ore — perché il modo in cui un interruttore
+        di manutenzione fallisce è sempre lo stesso: qualcuno lo alza e nessuno se ne ricorda.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="head"><div class="num">§3</div><div><h2>L'ordine delle precedenze</h2></div></div>
+    <p>Quando due ragioni chiedono cose diverse, vince la prima di questa lista. È l'unico
+      posto in cui si decide chi ha ragione.</p>
+    <ol class="ladder">
+      <li>Manutenzione</li>
+      <li>Guasto, o pompa non in marcia</li>
+      <li>Telo chiuso da più di 24 h → cloro spento, anche con la piscina in uso</li>
+      <li>Antigelo</li>
+      <li>Piscina in uso</li>
+      <li>Riscaldamento da solare</li>
+      <li>Riscaldamento da rete</li>
+      <li>Obiettivi della giornata e recupero</li>
+      <li>Finestra della pompa</li>
+    </ol>
+    <div class="note cold">
+      <span class="tag">Modifica del 17/9/2026</span>
+      <p>L'antigelo è stato spostato <em>sopra</em> <b>manual</b> e <b>closed</b>. Prima quei
+        due modi congelavano anche la protezione dal gelo — cioè proprio in <b>closed</b>, il
+        modo in cui la piscina passa tutto l'inverno senza che nessuno la guardi. Sbagliare da
+        una parte costa una pompa ferma per qualche ora; dall'altra costa le tubazioni.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="head"><div class="num">§4</div><div><h2>La pompa</h2></div></div>
+    <p>Si accende se <em>qualcuno</em> la chiede, e va alla massima velocità richiesta. Chi
+      può chiederla: la finestra di filtrazione, la pompa di calore (80 %), il clorinatore,
+      <code>input_boolean.pool_in_use</code>, l'antigelo (30 %), il recupero obiettivi, e i
+      5 minuti di post-circolazione dopo che la PdC si è fermata.</p>
+    <div class="note stop">
+      <span class="tag">«Pompa in marcia» non si legge nei watt</span>
+      <p>La potenza va col cubo della velocità: 427 W all'80 %, circa 105 W al 50 %, circa
+        22 W al 30 %. Una soglia sui watt mente in silenzio appena si scende. L'unica verità
+        è <code>binary_sensor.pool_pompa_in_marcia</code>, e poiché quel sensore non ha un
+        ritardo proprio, PoolBrain aspetta <b>60 secondi</b> di marcia continua prima di
+        fidarsi e far partire PdC o cloro.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="head"><div class="num">§5</div><div><h2>La pompa di calore</h2></div></div>
+    <p>Quattro stati, visibili su <code>sensor.pool_poolbrain_pdc_state</code>:
+      <b>off</b>, <b>solar</b>, <b>grid</b>, <b>blocked</b>. PoolBrain scrive solo due cose:
+      acceso/spento e il setpoint. Il resto lo fa il termostato della macchina.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Stato</th><th>Quando</th><th>Setpoint</th></tr></thead>
+      <tbody>
+        <tr><td><b>solar</b></td><td>Margine fotovoltaico sopra soglia per 10 minuti, acqua sotto il target solare, dentro una finestra di riscaldamento, pompa confermata.</td><td>target solare</td></tr>
+        <tr><td><b>grid</b></td><td>Acqua sotto la minima garantita, dentro la finestra notturna, fascia diversa da F2, riscaldamento da rete abilitato.</td><td>minima garantita</td></tr>
+        <tr><td><b>blocked</b></td><td>Guasto, pompa ferma, manutenzione, modo manual/closed/winter.</td><td>—</td></tr>
+      </tbody>
+    </table></div>
+    <h3>Le tre regole che proteggono il compressore</h3>
+    <ul>
+      <li><b>Mai in F2.</b> F1 ed F3 costano circa uguale, F2 è la fascia cara. Il rifiuto si
+        legge nella riga delle ragioni come <span class="mono">band F2</span>. La decisione si
+        prende sulla <em>fascia</em>, mai sul prezzo: l'indice PUN cambia ogni mese.</li>
+      <li><b>30 minuti minimi acceso, 15 minimi spento.</b> Una nuvola di 12 minuti non ferma
+        una sessione; una sessione appena finita non riparte subito.</li>
+      <li><b>Un buco di lettura non è un'informazione.</b> Le entità della PdC arrivano dal
+        cloud ogni ~5 minuti e sfarfallano tra una lettura e l'altra. PoolBrain considera
+        quel vuoto «nessuna novità»: non cambia stato e non manda comandi. Leggere un buco
+        come «spenta» e riavviare una macchina che non si era mai fermata è esattamente
+        l'errore da cui questa regola difende.</li>
+    </ul>
+    <div class="note warn">
+      <span class="tag">Da sapere</span>
+      <p>In modalità <b>auto</b> la macchina è di PoolBrain. Se la accendi a mano, verrà
+        spenta: comandata, riasserita dopo 15 minuti, e poi lasciata stare con una notifica.
+        Le vie d'uscita previste sono <b>manual</b> e la manutenzione, non vincere la
+        discussione.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="head"><div class="num">§6</div><div><h2>Il clorinatore</h2></div></div>
+    <p>PoolBrain <em>abilita</em> soltanto: il relè dà corrente, l'UNIKO decide i suoi cicli.
+      Per questo l'unica misura onesta del lavoro fatto è
+      <code>sensor.salt_chlorinator_runtime_today</code> — lo stato del relè non è una prova
+      di produzione, e non viene mai contato come tale.</p>
+    <p>La cella è abilitata quando c'è portata confermata, si è dentro la finestra del cloro e
+      mancano ore all'obiettivo giornaliero. <code>sensor.pool_poolbrain_chlorine_hours_missing</code>
+      dice quante ne mancano. Superata l'ora limite, se ne mancano ancora, pompa e cella
+      restano accese fino all'obiettivo o fino a mezzanotte.</p>
+    <p>Due regole vincono anche sulla piscina in uso: <b>niente portata, niente cella</b>, e
+      <b>telo chiuso da più di 24 ore</b> — una piscina coperta da un giorno non ha bisogno
+      di altro cloro, e farlo lo stesso è il modo di ritrovarsela sovraclorata sotto il telo.</p>
+    <div class="note stop">
+      <span class="tag">Mai sotto l'80 %</span>
+      <p>Il minimo del flussostato della cella <em>non è noto</em>. Finché non sarà misurato,
+        la cella non viene mai abilitata sotto l'80 % di velocità pompa, e la velocità non
+        viene mai abbassata sotto l'80 % finché il relè risulta ancora acceso.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="head"><div class="num">§7</div><div><h2>Inverno e antigelo</h2></div></div>
+    <p>In <b>winter</b> la finestra estiva sparisce: la pompa parte a mezzogiorno per le ore
+      impostate, all'80 %, con la cella abilitata, e la pompa di calore resta bloccata.</p>
+    <p>L'<b>antigelo</b> è un'altra cosa e vince su tutto tranne la manutenzione: sotto la
+      soglia di innesco la pompa gira in continuo alla velocità antigelo con la cella spenta,
+      e si rilascia solo quando l'aria torna sopra la soglia di rilascio. Sono due soglie
+      diverse apposta: con una sola, la pompa ticchetterebbe intorno allo zero.
+      <code>binary_sensor.pool_poolbrain_antifreeze</code> dice se è attivo, e una notifica
+      arriva sia quando si innesca sia quando rientra.</p>
+    <div class="note cold">
+      <span class="tag">Funziona anche a piscina chiusa</span>
+      <p>In <b>manual</b> e <b>closed</b> l'antigelo fa partire la pompa, spegne la cella e
+        lascia stare la pompa di calore. E quando il gelo passa, <em>rispegne la pompa che ha
+        acceso</em>: averla avviata è ciò che lo rende responsabile di fermarla.</p>
+    </div>
+    <div class="note warn">
+      <span class="tag">Da verificare al primo freddo</span>
+      <p>Nessuno ha ancora misurato la portata al 30 %. Se scende sotto
+        <code>input_number.pool_portata_minima</code>, il sensore «pompa in marcia» leggerà
+        <em>ferma</em> mentre la pompa sta girando. PoolBrain non ne soffre, ma
+        <span class="mono">automation.pool_allerta_pompa_ferma_da_24h</span> griderà al lupo a
+        ogni ondata di gelo. Misurala e o abbassi la portata minima, o alzi la velocità
+        antigelo.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="head"><div class="num">§8</div><div><h2>Come manda i comandi</h2></div></div>
+    <p>Quattro regole, tutte imparate sul campo e non inventate a tavolino.</p>
+    <ul>
+      <li><b>Comanda solo se serve.</b> Se il dispositivo è già dove deve essere, non parte
+        nessun comando. Per questo un riavvio di Home Assistant, con la piscina già a posto,
+        non produce né un clic di relè né una riga nel logbook.</li>
+      <li><b>Riprova una volta sola, poi smette.</b> Un dispositivo che non ha ancora
+        obbedito non è detto che si rifiuti — il bridge della pompa e il cloud della PdC hanno
+        i loro tempi. Passata l'attesa, un secondo comando; se non basta, la leva viene
+        lasciata stare e compare in <b>Attuazione → Leve non più guidate</b>.</li>
+      <li><b>Un dispositivo illeggibile non viene giudicato.</b> Niente comandi verso una
+        entità <span class="mono">unavailable</span>, e nessun addebito al suo ritorno.</li>
+      <li><b>L'ordine dentro un ciclo è idraulico.</b> In discesa: PdC, poi cella, poi pompa.
+        In salita: prima la portata, poi chi la consuma. E due freni: la velocità non scende
+        sotto l'80 % finché la cella risulta accesa, la pompa non si ferma finché la PdC
+        risulta in funzione. Entrambi <em>rimandano</em>, non annullano, e sbagliano sempre
+        dalla parte di più portata.</li>
+    </ul>
+    <div class="note">
+      <span class="tag">Perché «non più guidate» e non «comando manuale»</span>
+      <p>Da dentro Home Assistant le due cause sono indistinguibili: una persona alla casetta
+        e un dispositivo che ha smesso di accettare comandi lasciano esattamente le stesse
+        tracce. Il messaggio lo dice così com'è. La leva si sblocca da sola appena cambia
+        l'intenzione o appena il dispositivo torna dove serviva.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="head"><div class="num">§9</div><div><h2>Quando qualcosa sembra sbagliato</h2></div></div>
+    <p>Quattro mosse, in quest'ordine.</p>
+    <ol>
+      <li><b>Leggi la riga delle ragioni.</b> <code>sensor.pool_poolbrain_supervisor_reason</code>
+        dice in una frase perché ogni attuatore è dove è. Nove volte su dieci finisce qui.</li>
+      <li><b>Guarda la scheda Attuazione.</b> Se compare una leva fra quelle «non più guidate»,
+        PoolBrain ha smesso di comandarla e ti sta dicendo che qualcosa la muove al posto suo.
+        Se compare fra quelle «in attesa», è un freno idraulico e passerà da solo.</li>
+      <li><b>Controlla il dry run.</b> Se è acceso, PoolBrain sta solo spiegando: tutto quello
+        che vedi «non fatto» è normale.</li>
+      <li><b>Guarda il log</b> (<span class="mono">custom_components.villa_pool</span> a
+        livello info). Ogni comando è una riga con la sua ragione; sono poche per definizione.
+        Decine di righe al giorno significano che qualcosa sta sfarfallando, ed è una
+        scoperta, non rumore.</li>
+    </ol>
+    <div class="note warn">
+      <span class="tag">Le due cose che non sono PoolBrain</span>
+      <p>Gli avvisi <span class="mono">pool_allerta_*</span> e il taglio di sicurezza del
+        clorinatore in mancanza di circolazione sono automazioni indipendenti, volutamente
+        fuori dall'integrazione. Non litigano mai con PoolBrain — quando manca la portata,
+        anche la legge di controllo vuole la cella spenta — ma possono avvisarti di una cosa
+        che PoolBrain sta già gestendo.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="head"><div class="num">§10</div><div><h2>Le impostazioni</h2></div></div>
+    <p>Tutte modificabili dalla dashboard, tutte conservate attraverso i riavvii. Fra
+      parentesi il valore di fabbrica.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Impostazione</th><th>Cosa decide</th></tr></thead>
+      <tbody>
+        <tr><td>Minima garantita <span class="u">(27,0 °C)</span></td><td>Sotto questa, di notte e fuori F2, si scalda da rete. Si ferma mezzo grado sopra.</td></tr>
+        <tr><td>Target solare <span class="u">(28,0 °C)</span></td><td>Fin dove si scalda quando il sole è gratis.</td></tr>
+        <tr><td>Margine solare ON / OFF <span class="u">(3000 / 2500 W)</span></td><td>Quanta potenza fotovoltaica libera serve per accendere, e sotto quale si considera finita.</td></tr>
+        <tr><td>Ore cloro al giorno <span class="u">(8 h)</span></td><td>Obiettivo giornaliero. Dimezzato dal fattore telo quando la piscina è coperta.</td></tr>
+        <tr><td>Ricambi al giorno <span class="u">(1,0)</span></td><td>Volume filtrato / 90 m³. Diagnostico.</td></tr>
+        <tr><td>Velocità filtrazione / con PdC <span class="u">(80 / 80 %)</span></td><td>Il punto di lavoro tarato del bypass.</td></tr>
+        <tr><td>Velocità antigelo <span class="u">(30 %, regolabile 30–80)</span></td><td>Quanto gira la pompa durante il gelo.</td></tr>
+        <tr><td>Antigelo ON / OFF <span class="u">(0,0 / +2,0 °C)</span></td><td>Le due soglie che evitano il ticchettio intorno allo zero.</td></tr>
+        <tr><td>Ore pompa e ore cloro in inverno <span class="u">(2 / 2 h)</span></td><td>La fascia di mezzogiorno in modalità winter.</td></tr>
+        <tr><td>Finestre orarie</td><td>Pompa, PdC solare, PdC rete (attraversa la mezzanotte), cloro, ora limite obiettivi, partenza invernale.</td></tr>
+        <tr><td>Prezzi F1 / F2 / F3</td><td>Solo per la stima del costo termico. Nessuna decisione li legge.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <div class="head"><div class="num">§11</div><div><h2>Cosa non fa, e perché</h2></div></div>
+    <ul>
+      <li><b>Il COP stimato è solo diagnostico.</b> C'è un unico punto misurato — 2,82 con
+        circa 18 °C d'aria, di notte, a pieno carico — e una pendenza modellata. Nessuna
+        decisione lo legge, e non dovrà leggerlo finché non sarà tarato su sessioni vere.</li>
+      <li><b>Le regole del telo sono inerti</b> finché il sensore non esiste e non viene
+        scelto nelle opzioni. Una lettura assente non spegne mai il cloro: solo un telo
+        <em>positivamente</em> chiuso da più di 24 ore lo fa.</li>
+      <li><b>Il rabbocco diurno da rete in F1</b> è proposto ma non implementato. L'aria calda
+        di giorno darebbe un COP molto migliore, ma è una decisione da prendere, non da
+        dedurre.</li>
+      <li><b>Il target solare non ha isteresi</b>: una sola soglia in entrambe le direzioni.
+        Con la sonda che balla sul decimo si contano un paio di accensioni in più in una
+        giornata. Aggiungere una banda lo risolverebbe, ma rinuncerebbe al sole gratis
+        nell'ultimo mezzo grado.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <p><b>Note tecniche.</b> Le entità di questa installazione si chiamano
+      <span class="mono">*.pool_poolbrain_*</span>, perché il dispositivo porta il nome
+      PoolBrain. Reinstallando l'integrazione da zero nascerebbero come
+      <span class="mono">*.pool_*</span> e le schede della dashboard andrebbero riscritte.</p>
+    <p>villa_pool v0.4.0 · Home Assistant 2026.8.3 · repository
+      <span class="mono">matponta/villa-pool</span>. Il contesto di progetto sta in
+      <span class="mono">CLAUDE.md</span>, le decisioni e il loro perché in
+      <span class="mono">STORY_POOL_CONTROLLER.md</span>.</p>
+  </footer>
+
+</div>
