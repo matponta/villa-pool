@@ -1,0 +1,79 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Villa Pool",
+        "description": "Pick the pool entities. Defaults are the verified inventory; leave the cover sensor empty until it is installed.",
+        "data": {
+          "pump_switch": "Pump switch",
+          "pump_running": "Pump running (truth)",
+          "pump_mode_select": "Pump mode",
+          "pump_speed_number": "Pump speed",
+          "pump_flow_sensor": "Pump flow",
+          "pump_power_sensor": "Pump power",
+          "pump_problem": "Pump problem",
+          "pump_flow_pressure_warning": "Pump flow/pressure warning",
+          "pump_hours_24h": "Pump hours last 24 h",
+          "pdc_climate": "PdC (climate)",
+          "pdc_running": "PdC really running",
+          "pdc_fault": "PdC fault",
+          "pdc_power_sensor": "PdC electrical power",
+          "pdc_energy_sensor": "PdC energy",
+          "pdc_air_temp_sensor": "PdC ambient air temperature",
+          "chlorinator_switch": "Chlorinator enable",
+          "chlorinator_running": "Chlorinator really producing",
+          "chlorinator_hours_today": "Chlorinator hours today",
+          "water_temp_sensor": "Pool water temperature",
+          "outdoor_temp_sensor": "Outdoor temperature",
+          "solar_headroom_sensor": "Solar headroom",
+          "grid_power_sensor": "Grid power",
+          "tariff_band_sensor": "Tariff band",
+          "workday_sensor": "Workday / holiday",
+          "pool_in_use": "Bathing override",
+          "cover_closed": "Cover closed (optional - not installed yet)",
+          "notify_target": "Notify service"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Villa Pool is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Villa Pool entities",
+        "description": "Re-pick any input - for example the cover sensor once it is installed.",
+        "data": {
+          "pump_switch": "Pump switch",
+          "pump_running": "Pump running (truth)",
+          "pump_mode_select": "Pump mode",
+          "pump_speed_number": "Pump speed",
+          "pump_flow_sensor": "Pump flow",
+          "pump_power_sensor": "Pump power",
+          "pump_problem": "Pump problem",
+          "pump_flow_pressure_warning": "Pump flow/pressure warning",
+          "pump_hours_24h": "Pump hours last 24 h",
+          "pdc_climate": "PdC (climate)",
+          "pdc_running": "PdC really running",
+          "pdc_fault": "PdC fault",
+          "pdc_power_sensor": "PdC electrical power",
+          "pdc_energy_sensor": "PdC energy",
+          "pdc_air_temp_sensor": "PdC ambient air temperature",
+          "chlorinator_switch": "Chlorinator enable",
+          "chlorinator_running": "Chlorinator really producing",
+          "chlorinator_hours_today": "Chlorinator hours today",
+          "water_temp_sensor": "Pool water temperature",
+          "outdoor_temp_sensor": "Outdoor temperature",
+          "solar_headroom_sensor": "Solar headroom",
+          "grid_power_sensor": "Grid power",
+          "tariff_band_sensor": "Tariff band",
+          "workday_sensor": "Workday / holiday",
+          "pool_in_use": "Bathing override",
+          "cover_closed": "Cover closed (optional - not installed yet)",
+          "notify_target": "Notify service"
+        }
+      }
+    }
+  }
+}
