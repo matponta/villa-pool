@@ -1,7 +1,19 @@
-# Cards for v0.5.0. NOT YET APPLIED — unlike dashboard_v0.4.0_cards.yaml, these
-# reference entities that do not exist on the live system until v0.5.0 is
-# installed. Apply them after the upgrade, or they render as "entity not
-# available".
+# Cards for v0.5.0. APPLIED to the live dashboard on 2026-09-17, after the HACS
+# upgrade — they reference entities that do not exist before it.
+#
+# The inverse, if they ever have to come out (section 8; remove the high indices
+# first, or they shift under you):
+#
+#   [{"op": "remove", "path": "/views/0/sections/8/cards/35"},   # air graph
+#    {"op": "remove", "path": "/views/0/sections/8/cards/34"},   # cop graph
+#    {"op": "remove", "path": "/views/0/sections/8/cards/33"},   # air tile
+#    {"op": "remove", "path": "/views/0/sections/8/cards/32"},   # cop tile
+#    {"op": "remove", "path": "/views/0/sections/8/cards/31"},   # session card
+#    {"op": "remove", "path": "/views/0/sections/8/cards/3"}]    # topup switch
+#
+# (Verified in place 2026-09-17: the switch went in at 3, which pushed the
+# session block from 30.. to 31.. — hence these indices and not the ones the
+# patch was written with.)
 #
 # ENTITY IDS: live ids carry the device name, so `pool_poolbrain_*`. See
 # CLAUDE.md → "The live entity ids are not the §4 ids".
@@ -65,19 +77,34 @@
     columns: 6
     rows: 1
 
-# 4 · The fit itself, once there are a few clean points to look at.
+# 4 · The fit itself, once there are a few clean points. TWO graphs, not one:
+#     `statistics-graph` wants a single unit across its entities, and COP is
+#     unitless while the air is °C. Same time axis, so the relationship is still
+#     readable by eye — and long-term statistics survive the recorder purge,
+#     which a history-graph over 30 days would not.
 - type: statistics-graph
-  title: COP misurato vs aria (30 g) — solo le sessioni notturne tarano
-  chart_type: scatter
-  period: hour
+  title: COP misurato — solo le sessioni notturne tarano il modello
+  chart_type: line
+  period: day
   days_to_show: 30
   stat_types:
     - mean
   entities:
     - entity: sensor.pool_poolbrain_last_session_cop
       name: COP misurato
+  grid_options:
+    columns: full
+    rows: 3
+- type: statistics-graph
+  title: Aria media durante le sessioni
+  chart_type: line
+  period: day
+  days_to_show: 30
+  stat_types:
+    - mean
+  entities:
     - entity: sensor.pool_poolbrain_last_session_air_temp
       name: Aria media
   grid_options:
     columns: full
-    rows: 4
+    rows: 3
