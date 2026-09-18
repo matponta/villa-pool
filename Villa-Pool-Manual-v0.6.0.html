@@ -122,8 +122,8 @@
     <p class="lede">Il supervisore che coordina pompa, pompa di calore e clorinatore
       come un unico impianto idraulico.</p>
     <div class="meta">
-      <span><b>Versione</b> villa_pool v0.4.0</span>
-      <span><b>Data</b> 17 settembre 2026</span>
+      <span><b>Versione</b> villa_pool v0.6.0</span>
+      <span><b>Data</b> 18 settembre 2026</span>
       <span><b>Dashboard</b> Pool v2 → <span class="mono">pool-overview-v2</span></span>
     </div>
   </header>
@@ -225,15 +225,45 @@
       <thead><tr><th>Stato</th><th>Quando</th><th>Setpoint</th></tr></thead>
       <tbody>
         <tr><td><b>solar</b></td><td>Margine fotovoltaico sopra soglia per 10 minuti, acqua sotto il target solare, dentro una finestra di riscaldamento, pompa confermata.</td><td>target solare</td></tr>
-        <tr><td><b>grid</b></td><td>Acqua sotto la minima garantita, dentro la finestra notturna, fascia diversa da F2, riscaldamento da rete abilitato.</td><td>minima garantita</td></tr>
+        <tr><td><b>grid</b></td><td>Acqua sotto la minima garantita, riscaldamento da rete abilitato, e si è dentro una delle due finestre di rete — qui sotto.</td><td>minima garantita</td></tr>
         <tr><td><b>blocked</b></td><td>Guasto, pompa ferma, manutenzione, modo manual/closed/winter.</td><td>—</td></tr>
       </tbody>
     </table></div>
-    <h3>Le tre regole che proteggono il compressore</h3>
+    <h3>Quando si scalda da rete: due finestre</h3>
+    <p>Le finestre in cui la rete è ammessa sono due, e non costano la stessa cosa.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Finestra</th><th>Quando</th><th>Fascia</th></tr></thead>
+      <tbody>
+        <tr><td><b>notturna</b></td><td>23:00–07:00. È il ripiego: se la giornata non è bastata, si recupera di notte.</td><td>mai in F2</td></tr>
+        <tr><td><b>rabbocco diurno</b></td><td>Dentro la finestra solare (10:00–18:00), quando il sole non c'è ma l'acqua è già sotto la minima. Si spegne con <code>switch.pool_poolbrain_grid_day_topup</code>.</td><td>qualunque</td></tr>
+      </tbody>
+    </table></div>
+    <div class="note cold">
+      <span class="tag">Modifica del 18/9/2026</span>
+      <p>Il rabbocco diurno <b>ignora la fascia</b>, F2 compresa. F2 costa circa il 17 % in
+        più al kWh elettrico, ma di giorno l'aria è 8–10 °C più calda e lo stesso kWh compra
+        circa il 24 % di calore in più: le due cose si equivalgono. Rifiutare F2 di giorno
+        non risparmiava il calore, lo spostava alle 23:00 — aria più fredda, COP peggiore. E
+        con le finestre attuali rifiutava <em>un giorno solo</em>: il sabato è F2 dalle 07:00
+        alle 23:00, mentre la F2 dei giorni feriali (07–08 e 19–23) cade tutta fuori dalla
+        finestra solare.</p>
+      <p>La <b>finestra notturna mantiene il divieto</b>: lì non cambia nient'altro che la
+        fascia, e F2 è semplicemente più cara. Quando invece il rabbocco sta pagando la
+        fascia cara, la riga delle ragioni lo dice:
+        <span class="mono">daytime top-up (band F2)</span>. Esente non vuol dire nascosto —
+        è il kWh elettrico più caro che la piscina compra.</p>
+    </div>
+    <div class="note warn">
+      <span class="tag">Quanto costa</span>
+      <p>Il rabbocco diurno raddoppia all'incirca la spesa giornaliera: non perché il calore
+        costi di più — al kWh termico costa il 24 % in meno — ma perché la piscina
+        <em>raggiunge e tiene</em> la minima invece di scivolarci sotto, e quindi di calore
+        ne fa circa il doppio. Il sabato in F2, unico giorno che il divieto toccava davvero,
+        sono circa 4 €: stima, non misura. Se la bolletta è il problema, la leva è quello
+        switch.</p>
+    </div>
+    <h3>Le due regole che proteggono il compressore</h3>
     <ul>
-      <li><b>Mai in F2.</b> F1 ed F3 costano circa uguale, F2 è la fascia cara. Il rifiuto si
-        legge nella riga delle ragioni come <span class="mono">band F2</span>. La decisione si
-        prende sulla <em>fascia</em>, mai sul prezzo: l'indice PUN cambia ogni mese.</li>
       <li><b>30 minuti minimi acceso, 15 minimi spento.</b> Una nuvola di 12 minuti non ferma
         una sessione; una sessione appena finita non riparte subito.</li>
       <li><b>Un buco di lettura non è un'informazione.</b> Le entità della PdC arrivano dal
@@ -242,6 +272,19 @@
         come «spenta» e riavviare una macchina che non si era mai fermata è esattamente
         l'errore da cui questa regola difende.</li>
     </ul>
+    <h3>Il registro delle sessioni</h3>
+    <p>Ogni riscaldamento viene misurato e pubblicato:
+      <code>sensor.pool_poolbrain_last_session_cop</code>, con accanto l'aria media e i kWh
+      elettrici della sessione. Il COP è il calore finito in acqua (90 m³ × 1,163 × ΔT)
+      diviso i kWh contati sulla fase A. Serve a <em>tarare</em> il modello di COP, che oggi
+      poggia su una misura sola.</p>
+    <p>Due regole lo tengono onesto. <b>Non inventa un COP</b>: sessione troppo breve, ΔT
+      dentro la risoluzione della sonda, una lettura mancante, un contatore che non si è
+      mosso — in ognuno di quei casi la sessione esce senza COP e con una nota che dice
+      quale. Un punto sbagliato sarebbe peggio di nessun punto, perché verrebbe creduto. E
+      <b>solo le sessioni notturne sono pulite</b>: di giorno il sole scalda anche la
+      piscina, e il merito se lo prenderebbe il compressore — il che conta adesso che il
+      rabbocco diurno rende ordinarie le sessioni di giorno.</p>
     <div class="note warn">
       <span class="tag">Da sapere</span>
       <p>In modalità <b>auto</b> la macchina è di PoolBrain. Se la accendi a mano, verrà
@@ -360,7 +403,8 @@
     <div class="tbl"><table>
       <thead><tr><th>Impostazione</th><th>Cosa decide</th></tr></thead>
       <tbody>
-        <tr><td>Minima garantita <span class="u">(27,0 °C)</span></td><td>Sotto questa, di notte e fuori F2, si scalda da rete. Si ferma mezzo grado sopra.</td></tr>
+        <tr><td>Minima garantita <span class="u">(27,0 °C)</span></td><td>Sotto questa si scalda da rete, nelle due finestre del §5. Si ferma mezzo grado sopra.</td></tr>
+        <tr><td>Rabbocco diurno da rete <span class="u">(acceso)</span></td><td>Permette la rete dentro la finestra solare quando il sole non basta, in qualunque fascia. Spento: da rete si scalda solo di notte, e mai in F2.</td></tr>
         <tr><td>Target solare <span class="u">(28,0 °C)</span></td><td>Fin dove si scalda quando il sole è gratis.</td></tr>
         <tr><td>Margine solare ON / OFF <span class="u">(3000 / 2500 W)</span></td><td>Quanta potenza fotovoltaica libera serve per accendere, e sotto quale si considera finita.</td></tr>
         <tr><td>Ore cloro al giorno <span class="u">(8 h)</span></td><td>Obiettivo giornaliero. Dimezzato dal fattore telo quando la piscina è coperta.</td></tr>
@@ -380,13 +424,15 @@
     <ul>
       <li><b>Il COP stimato è solo diagnostico.</b> C'è un unico punto misurato — 2,82 con
         circa 18 °C d'aria, di notte, a pieno carico — e una pendenza modellata. Nessuna
-        decisione lo legge, e non dovrà leggerlo finché non sarà tarato su sessioni vere.</li>
+        decisione lo legge, e non dovrà leggerlo finché non sarà tarato sulle sessioni vere
+        che il registro del §5 sta raccogliendo.</li>
       <li><b>Le regole del telo sono inerti</b> finché il sensore non esiste e non viene
         scelto nelle opzioni. Una lettura assente non spegne mai il cloro: solo un telo
         <em>positivamente</em> chiuso da più di 24 ore lo fa.</li>
-      <li><b>Il rabbocco diurno da rete in F1</b> è proposto ma non implementato. L'aria calda
-        di giorno darebbe un COP molto migliore, ma è una decisione da prendere, non da
-        dedurre.</li>
+      <li><b>Non insegue il prezzo.</b> Dove la fascia conta — la finestra notturna — la
+        decisione si prende sulla <em>fascia</em>, mai sul prezzo in €: l'indice PUN cambia
+        ogni mese, e una regola scritta sui centesimi invecchierebbe da sola. I prezzi F1 /
+        F2 / F3 impostabili servono solo alla stima del costo termico.</li>
       <li><b>Il target solare non ha isteresi</b>: una sola soglia in entrambe le direzioni.
         Con la sonda che balla sul decimo si contano un paio di accensioni in più in una
         giornata. Aggiungere una banda lo risolverebbe, ma rinuncerebbe al sole gratis
@@ -399,7 +445,7 @@
       <span class="mono">*.pool_poolbrain_*</span>, perché il dispositivo porta il nome
       PoolBrain. Reinstallando l'integrazione da zero nascerebbero come
       <span class="mono">*.pool_*</span> e le schede della dashboard andrebbero riscritte.</p>
-    <p>villa_pool v0.4.0 · Home Assistant 2026.8.3 · repository
+    <p>villa_pool v0.6.0 · Home Assistant 2026.8.3 · repository
       <span class="mono">matponta/villa-pool</span>. Il contesto di progetto sta in
       <span class="mono">CLAUDE.md</span>, le decisioni e il loro perché in
       <span class="mono">STORY_POOL_CONTROLLER.md</span>.</p>

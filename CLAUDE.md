@@ -245,7 +245,7 @@ Checked on the owner's HA 2026-09-17: the deployed integration registers as
 and that test is not wrong: a fresh install with the device named `Pool` really
 does produce those ids. Both are true and they do not match.
 
-`pool-overview-v2` and `Villa-Pool-Manual-v0.4.0.html` use the LIVE ids, because
+`pool-overview-v2` and `Villa-Pool-Manual-v0.6.0.html` use the LIVE ids, because
 that is what the owner's system answers to. **A fresh re-add of the integration
 would produce the §4 ids and break every card on that dashboard.** Do not
 "fix" either side without deciding which one is the contract.
@@ -428,10 +428,6 @@ future re-deploy.
   alert. Until then every cover rule is inert by construction.
 - Check `automation.pool_test_cop_notturno` is disabled before any actuating
   release — the integration must not fight a running one-shot (§6).
-- **The owner manual is still `Villa-Pool-Manual-v0.4.0.html`.** It predates the
-  daytime top-up entirely and still says *fascia diversa da F2* in the PdC-states
-  table and the "minima garantita" row. It wants a v0.6.0 pass, not a patch. (The
-  live dashboard tile was relabelled on 2026-09-18 — `dashboard_v0.6.0_cards.yaml`.)
 - **§9's "flow at 30 %" is now load-bearing.** `binary_sensor.pool_pompa_in_marcia`
   needs flow >= `input_number.pool_portata_minima` (1 m3/h). If the pump at
   `antifreeze_speed` does not reach that, the sensor reads OFF while the pump is

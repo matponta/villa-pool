@@ -108,20 +108,27 @@ line is the only place an owner sees it.
 `views[0].sections[8].cards[3]` now reads "Rabbocco diurno da rete (ogni
 fascia)". Recorded with its inverse in `dashboard_v0.6.0_cards.yaml`; the patch
 carries two `test` ops on the index, because a bare `replace` against a stale
-one renames whatever card happens to be there. The v0.4.0 manual
-(`Villa-Pool-Manual-v0.4.0.html`) also still says *fascia diversa da F2* in the
-PdC-states table and in the "minima garantita" row; it is a v0.4.0 document and
-was already behind on the top-up itself, so it wants a v0.6.0 pass rather than a
-patch.
+one renames whatever card happens to be there.
+
+**The manual is now `Villa-Pool-Manual-v0.6.0.html`** (the v0.4.0 file is
+renamed, not kept alongside — two manuals and no way to tell which is current is
+worse than one that is behind). It had never been updated for v0.5.0 either, so
+the pass covered three things: §5 gains the two grid windows as a table plus the
+18/9 amendment and what it costs; the heating-session log is documented for the
+first time, including the two rules that keep it from inventing a COP; and §11's
+"il rabbocco diurno è proposto ma non implementato" — false since v0.5.0 — is
+replaced by "non insegue il prezzo", which is where the band-not-price rule now
+lives. "Le tre regole che proteggono il compressore" is now two: the F2 veto was
+never a compressor rule, it was an economic one filed in the wrong place.
 
 ### Kickstart prompt for the next session
 
 > Read `CLAUDE.md` then `STORY_POOL_CONTROLLER.md`. v0.6.0 is tagged: §5.4's
 > daytime grid top-up now ignores the tariff band (night window unchanged).
-> The live tile was relabelled with it; the owner manual is still the v0.4.0 one
-> and still says *fascia diversa da F2*. The owner still owes the
-> cover sensor entity id, and the SOLAR target's missing hysteresis is still
-> their call. Two loose ends worth naming: a restart during a daytime top-up
+> The live tile was relabelled with it and the manual is now
+> `Villa-Pool-Manual-v0.6.0.html` — **print it to PDF**, that is the only step of
+> this release left undone. The owner still owes the cover sensor entity id, and
+> the SOLAR target's missing hysteresis is still their call. Two loose ends worth naming: a restart during a daytime top-up
 > does not adopt the run (`restore_memory` knows only the night window — see the
 > v0.6.0 review), and `tests/test_engine.py::test_live_enables_the_chlorinator`
 > plus `test_a_pool_already_doing_the_right_thing_is_not_commanded` only pass
@@ -229,7 +236,9 @@ dashboard is storage-mode, so `dashboard_v0.4.0_cards.yaml` in this repo is the
 versioned record — including the exact inverse, two JSON Patch removes, if it
 ever has to come out.
 
-**The manual** is `Villa-Pool-Manual-v0.4.0.html`, in Italian, matching the
+**The manual** is `Villa-Pool-Manual-v0.4.0.html` *(renamed to
+`Villa-Pool-Manual-v0.6.0.html` on 18/9 — one manual, not a shelf of them)*, in
+Italian, matching the
 villa-hvac convention (those were HTML printed to PDF from a browser — Skia/PDF,
 8 pages). Print it to `Villa-Pool-Manual-v0.4.0.pdf` with Cmd-P → Save as PDF;
 the print stylesheet is A4 with 16 mm margins and avoids breaking inside

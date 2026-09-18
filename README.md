@@ -149,11 +149,12 @@ STORY §7, so a failure points straight back at the brief.
 
 ## Manual and dashboard
 
-`Villa-Pool-Manual-v0.4.0.html` is the owner's manual, in Italian — print it to
+`Villa-Pool-Manual-v0.6.0.html` is the owner's manual, in Italian — print it to
 PDF from a browser (Cmd-P → Save as PDF), which is how the villa-hvac manuals
 were made. It covers the dry-run switch, the five modes, the priority ladder,
-the four PdC states, the chlorinator's overriding rules, winter and antifreeze,
-how commands are sent, and a four-step "when something looks wrong".
+the four PdC states and the two grid windows, the heating-session log, the
+chlorinator's overriding rules, winter and antifreeze, how commands are sent,
+and a four-step "when something looks wrong".
 
 `dashboard_v0.4.0_cards.yaml` is the versioned record of the cards added to the
 `pool-overview-v2` dashboard, which is storage-mode and lives only in HA.
