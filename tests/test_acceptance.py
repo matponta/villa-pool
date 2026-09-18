@@ -27,7 +27,7 @@ from custom_components.villa_pool.const import (
     PDC_OFF,
     PDC_SOLAR,
 )
-from custom_components.villa_pool.supervisor import GRID_DAY, GRID_NIGHT, decide
+from custom_components.villa_pool.supervisor import decide
 from tests.helpers import at, memory, state
 
 MIN = timedelta(minutes=1)
@@ -228,6 +228,11 @@ class TestCriterion04GridNeverInF2:
     the grid window to 19:00 to put 19:30 genuinely inside it — that is the only
     way to exercise "refused *even inside* the window". The band veto itself is
     pinned independently.
+
+    NOTE 2 (amendment 2026-09-18): the criterion is now about the NIGHT grid
+    window specifically. §5.4's daytime top-up is exempt from the band, so
+    "GRID is never in F2" is no longer true of the pool as a whole — 19:30 is
+    outside the solar window, which is what keeps every case below honest.
     """
 
     def test_f2_is_refused_inside_a_grid_window_that_covers_1930(self):
@@ -495,8 +500,7 @@ class TestCriterion10RestartDuringGrid:
         now = at(2026, 9, 17, 1, 0)
         mem = restore_memory(mono=now, pdc_running=True, pump_running=True,
                              water_temp=26.0,
-                             min_temp=DEFAULT_MIN_TEMP, band=BAND_F3,
-                             grid_heating=True, grid_window=GRID_NIGHT,
+                             min_temp=DEFAULT_MIN_TEMP, grid_ok=True,
                              solar_ok=False)
         assert mem.pdc_state == PDC_GRID
 
@@ -506,8 +510,7 @@ class TestCriterion10RestartDuringGrid:
         now = at(2026, 9, 17, 1, 0)
         mem = restore_memory(mono=now, pdc_running=False, pump_running=True,
                              water_temp=27.6,
-                             min_temp=DEFAULT_MIN_TEMP, band=BAND_F3,
-                             grid_heating=True, grid_window=GRID_NIGHT,
+                             min_temp=DEFAULT_MIN_TEMP, grid_ok=True,
                              solar_ok=False)
         assert mem.pdc_state == PDC_OFF
 
@@ -519,8 +522,7 @@ class TestCriterion10RestartDuringGrid:
         now = at(2026, 9, 17, 1, 0)
         mem = restore_memory(mono=now, pdc_running=True, pump_running=True,
                              water_temp=26.0,
-                             min_temp=DEFAULT_MIN_TEMP, band=BAND_F3,
-                             grid_heating=True, grid_window=GRID_NIGHT,
+                             min_temp=DEFAULT_MIN_TEMP, grid_ok=True,
                              solar_ok=False)
         st = state(now, water_temp=26.0, band=BAND_F3, grid_heating=True)
         dec, mem2 = run(st, mem)
@@ -537,8 +539,7 @@ class TestCriterion10RestartDuringGrid:
 
         now = at(2026, 9, 17, 1, 0)
         mem = restore_memory(mono=now, pdc_running=running, water_temp=water,
-                             min_temp=DEFAULT_MIN_TEMP, band=BAND_F3,
-                             grid_heating=True, grid_window=GRID_NIGHT,
+                             min_temp=DEFAULT_MIN_TEMP, grid_ok=True,
                              solar_ok=False)
         assert mem.pdc_state == expected
 
@@ -552,8 +553,12 @@ class TestDaytimeGridTopUp:
     so the same thermal kWh costs an estimated 30-45 % less than at 23:00, and
     F1 and F3 are within a cent of each other. Confirmed 2026-09-17, default ON.
 
-    The daily logic it produces: reach the guaranteed minimum by evening in F1;
+    The daily logic it produces: reach the guaranteed minimum by evening;
     if that did not happen, the night window is still there as a fallback.
+
+    **AMENDED 2026-09-18 (owner): the top-up ignores the tariff band.** It ran
+    in F1 only, which with the default windows meant "not on Saturdays" and
+    nothing else. The night window keeps §3's F2 veto.
     """
 
     def midday(self, water=25.6, band="F1", topup=True, headroom=0.0, day=16):
@@ -589,14 +594,53 @@ class TestDaytimeGridTopUp:
         assert dec.pdc_state == PDC_OFF
         assert "outside grid window" in dec.reason
 
-    def test_f2_is_still_refused(self):
-        """The veto that matters. Saturday is F2 from 07:00 to 23:00, so the
-        solar window sits inside the expensive band all day — and the top-up
-        must not become a way in."""
+    def test_f2_no_longer_refuses_the_day_topup(self):
+        """AMENDMENT 2026-09-18 (owner) — the top-up ignores the band.
+
+        This test asserted the exact opposite through v0.5.0, and the inversion
+        IS the change. Saturday is F2 from 07:00 to 23:00, so the solar window
+        sits inside the expensive band all day: with the default windows the
+        veto bought the pool one cold day a week and nothing else. F2 is ~17 %
+        dearer per electrical kWh; daytime air buys ~24 % more heat per kWh.
+        Waiting for 23:00 was never the cheaper answer, only the colder one.
+        """
         st, mem = self.midday(band=BAND_F2, day=19)      # Saturday
         dec, _ = run(st, mem)
+        assert dec.pdc_state == PDC_GRID
+        assert dec.pdc_setpoint == DEFAULT_MIN_TEMP
+
+    def test_an_f2_top_up_says_which_band_it_is_paying_for(self):
+        """Exempt is not the same as hidden. This is the dearest electrical kWh
+        the pool buys and the reason line is the only place it shows — on
+        entry AND while it holds, for the same reason the daytime label itself
+        is repeated."""
+        st, mem = self.midday(band=BAND_F2, day=19)
+        dec, mem = run(st, mem)
+        assert "daytime top-up (band F2)" in dec.reason
+        dec, _ = run(st.with_now(st.now + 60 * MIN), mem)
+        assert dec.pdc_state == PDC_GRID
+        assert "daytime top-up (band F2)" in dec.reason
+
+    def test_the_night_window_still_refuses_f2(self):
+        """The amendment is scoped to the daytime window. At 19:30 the air is
+        not the daytime air, so the band is the only thing that varies and §3's
+        veto stands — §7.4, which this must not have quietly retired."""
+        now = at(2026, 9, 19, 19, 30)                    # Saturday → F2
+        st = state(now, water_temp=25.0, band=BAND_F2, grid_heating=True,
+                   headroom_w=0.0, pdc_grid_start=time(19, 0))
+        dec, _ = run(st, memory(now))
         assert dec.pdc_state == PDC_OFF
         assert "band F2" in dec.reason
+
+    def test_the_exemption_follows_the_day_window_not_the_label(self):
+        """The windows are owner-editable and can be made to overlap. What
+        lifts the veto is that the DAY window authorises — not which of the two
+        `grid_window` happens to name first, which is still the night one."""
+        now = at(2026, 9, 19, 16, 0)                     # Saturday, F2, no sun
+        st = state(now, water_temp=25.6, headroom_w=0.0, band=BAND_F2,
+                   pdc_grid_start=time(15, 0))           # night window covers 16:00
+        dec, _ = run(st, memory(now))
+        assert dec.pdc_state == PDC_GRID
 
     def test_free_sun_still_wins(self):
         """The top-up is a fallback for when SOLAR conditions fail, never a
@@ -648,31 +692,39 @@ class TestDaytimeGridTopUp:
 class TestRestartDuringADaytimeTopUp:
     """§7.10 applied to the window §5.4 added: a restart at 15:00 mid top-up.
 
-    §7.10 is written about 01:00 because when it was written the night window
-    was the only one a grid run could happen in. The daytime top-up made
-    daytime grid runs ordinary, and `restore_memory` was still being handed the
-    night window alone — so a restart mid top-up re-derived OFF while the
-    machine was genuinely heating, and the next tick entered GRID again as a
-    fresh run.
+    §7.10 is written about 01:00 because the night window was the only one a
+    grid run could happen in when it was written. `restore_memory` was still
+    being handed the night window alone, so a restart mid top-up re-derived OFF
+    while the machine was genuinely heating, and the next tick entered GRID
+    again as a fresh run — bounded at the relay (the actuator is idempotent and
+    the PdC is already on `heat` at the same setpoint, so NOT an extra
+    compressor cycle) but it reset `pdc_since` and bracketed a session that
+    never happened.
 
-    Bounded at the relay (the actuator is idempotent and the PdC is already on
-    `heat` at the same setpoint, so it is NOT an extra compressor cycle) but it
-    reset `pdc_since` and opened a session bracket that never happened.
+    The fix is that `restore_memory` no longer holds an opinion: it is handed
+    `grid_conditions`' own answer, so **it adopts exactly what the law would
+    authorise this tick** — through the daytime window, and through the
+    2026-09-18 band amendment, without knowing about either.
     """
 
-    def restored(self, *, water=25.6, band="F1", window=GRID_DAY, day=17):
-        """The Memory a restart at 15:00 comes back with.
+    def restored(self, *, water=25.6, band="F1", topup=True, day=17, hh=15):
+        """The state at `hh`:00 and the Memory a restart there comes back with.
 
         15:00 is inside the 10-18 solar window and outside the 23-07 night one;
-        17/9/2026 is a Thursday, so F1.
+        17/9/2026 is a Thursday, 19/9 a Saturday.
         """
-        from custom_components.villa_pool.supervisor import restore_memory
+        from custom_components.villa_pool.supervisor import (
+            grid_conditions, restore_memory,
+        )
 
-        now = at(2026, 9, day, 15, 0)
-        return now, restore_memory(
+        now = at(2026, 9, day, hh, 0)
+        st = state(now, water_temp=water, headroom_w=0.0, band=band,
+                   grid_day_topup=topup)
+        return st, restore_memory(
             mono=now, pdc_running=True, pump_running=True, water_temp=water,
-            min_temp=DEFAULT_MIN_TEMP, band=band, grid_heating=True,
-            grid_window=window, solar_ok=False,
+            min_temp=DEFAULT_MIN_TEMP,
+            grid_ok=grid_conditions(st, running=True)[0],
+            solar_ok=False,
         )
 
     def test_the_run_is_adopted(self):
@@ -682,25 +734,16 @@ class TestRestartDuringADaytimeTopUp:
     def test_the_next_tick_continues_it_rather_than_starting_it(self):
         """The discriminator: `pdc_since` survives, so this is one run and not
         two. A fresh entry would re-stamp it and bracket a new session."""
-        now, mem = self.restored()
-        st = state(now, water_temp=25.6, headroom_w=0.0, band="F1")
+        st, mem = self.restored()
         dec, mem2 = run(st, mem)
         assert dec.pdc_state == PDC_GRID
         assert mem2.pdc_since == mem.pdc_since
         assert "heating on grid" in dec.reason      # holding, not entering
 
-    def test_with_no_authorising_window_the_run_is_left_alone(self):
-        """What `grid_window()` answers at 15:00 with the top-up switch off —
-        and a run nothing recognises is still not adopted."""
-        _, mem = self.restored(window=None)
-        assert mem.pdc_state == PDC_OFF
-
-    def test_f2_is_not_adopted_either(self):
-        """The band veto applies to BOTH windows (§3, §5.4: the F2 veto is
-        untouched). Saturday 15:00 is F2 and inside the solar window, so the
-        machine would be running on something the law refuses this very tick —
-        adopting it would make the supervisor stop a run it never began."""
-        _, mem = self.restored(band=BAND_F2, day=19)      # Saturday
+    def test_with_the_top_up_off_the_run_is_left_alone(self):
+        """Nothing authorises a grid run at 15:00 with the switch off, so the
+        machine is somebody else's — most likely the owner's own one-shot."""
+        _, mem = self.restored(topup=False)
         assert mem.pdc_state == PDC_OFF
 
     def test_hot_enough_still_wins(self):
@@ -708,14 +751,23 @@ class TestRestartDuringADaytimeTopUp:
         _, mem = self.restored(water=27.6)
         assert mem.pdc_state == PDC_OFF
 
-    def test_the_night_window_still_restores_as_it_did(self):
-        """The change is additive: 01:00 in F3 is unchanged (§7.10)."""
-        from custom_components.villa_pool.supervisor import restore_memory
+    @pytest.mark.parametrize("hh,band,expected", [
+        # The amendment of 2026-09-18: the daytime top-up ignores the band...
+        (15, BAND_F2, PDC_GRID),
+        # ...and the night window does not. Saturday either way.
+        (1, BAND_F2, PDC_OFF),
+        (15, "F1", PDC_GRID),
+        (1, BAND_F3, PDC_GRID),
+    ])
+    def test_adoption_tracks_the_law_it_does_not_restate_it(
+        self, hh, band, expected
+    ):
+        """The invariant worth pinning, now that `grid_conditions` is the only
+        opinion: whatever the law would keep running, the restore adopts.
 
-        now = at(2026, 9, 17, 1, 0)
-        mem = restore_memory(
-            mono=now, pdc_running=True, pump_running=True, water_temp=26.0,
-            min_temp=DEFAULT_MIN_TEMP, band=BAND_F3, grid_heating=True,
-            grid_window=GRID_NIGHT, solar_ok=False,
-        )
-        assert mem.pdc_state == PDC_GRID
+        Both halves of the band rule fall out of it without `restore_memory`
+        knowing a band from a window — which is the point, because it is the
+        hand-copy of exactly these two rules that drifted twice in two days.
+        """
+        _, mem = self.restored(hh=hh, band=band, day=19)
+        assert mem.pdc_state == expected

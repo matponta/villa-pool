@@ -70,7 +70,7 @@ from .supervisor import (
     SessionResult,
     Windows,
     decide,
-    grid_window,
+    grid_conditions,
     in_window,
     restore_memory,
     session_step,
@@ -367,11 +367,11 @@ class SupervisorEngine:
             pump_running=data.get("pump_running"),
             water_temp=state.water_temp,
             min_temp=state.config.min_temp,
-            band=state.band,
-            grid_heating=state.grid_heating,
-            # Both windows, via the one function that knows there are two:
-            # a daytime top-up (§5.4) is a run to adopt, not to re-start.
-            grid_window=grid_window(state),
+            # The law's own answer, not a second opinion: a machine found
+            # running is adopted exactly when `grid_conditions` would keep it
+            # running this tick. Asking separately is what let the restore path
+            # miss §5.4's daytime window and then the 2026-09-18 band amendment.
+            grid_ok=grid_conditions(state, running=True)[0],
             solar_ok=False,
             outdoor_temp=state.outdoor_temp,
             antifreeze_off_c=state.config.antifreeze_off_c,
