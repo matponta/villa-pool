@@ -1,0 +1,46 @@
+# Dashboard change for v0.6.0. APPLIED to the live dashboard on 2026-09-18 and
+# verified in place (the read-back below is what the system answered, not what
+# the patch asked for).
+#
+# No new card: one field of an existing one. The v0.5.0 tile was labelled
+# "(F1)" because the daytime top-up was vetoed in F2; since the 2026-09-18
+# amendment it runs in any band, so the label was the only thing left claiming
+# otherwise.
+#
+# ENTITY IDS: live ids carry the device name, so `pool_poolbrain_*`. See
+# CLAUDE.md -> "The live entity ids are not the §4 ids".
+
+# The card, after the patch:
+#
+#   views[0].sections[8].cards[3]
+#     type: tile
+#     entity: switch.pool_poolbrain_grid_day_topup
+#     name: Rabbocco diurno da rete (ogni fascia)     # was: ... (F1)
+#     icon: mdi:weather-sunny-alert
+#     color: amber
+#     grid_options: {columns: 12, rows: 1}
+
+# What was sent (config_hash fe2ed0e7fe8b1f5d -> bb426b2ad10859c3). The two
+# `test` ops are deliberate: card indices shift whenever anything is added
+# above, and a bare `replace` against a stale index renames the wrong card
+# silently. A failed `test` aborts the whole patch instead.
+patch:
+  - op: test
+    path: /views/0/sections/8/cards/3/entity
+    value: switch.pool_poolbrain_grid_day_topup
+  - op: test
+    path: /views/0/sections/8/cards/3/name
+    value: Rabbocco diurno da rete (F1)
+  - op: replace
+    path: /views/0/sections/8/cards/3/name
+    value: Rabbocco diurno da rete (ogni fascia)
+
+# The inverse, if it ever has to come out. Re-verify the index first — see
+# above — and take a fresh config_hash.
+inverse:
+  - op: test
+    path: /views/0/sections/8/cards/3/entity
+    value: switch.pool_poolbrain_grid_day_topup
+  - op: replace
+    path: /views/0/sections/8/cards/3/name
+    value: Rabbocco diurno da rete (F1)

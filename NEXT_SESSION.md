@@ -42,6 +42,100 @@ discovering it during a reinstall.
 
 ---
 
+## v0.6.0 — the daytime top-up ignores the tariff band (2026-09-18)
+
+One owner decision, one condition, and the documentation that hangs off it.
+**268 tests.**
+
+**What changed.** `grid_conditions()` no longer reads the band when §5.4's
+daytime window is the one authorising the run. `pdc.in_day_topup_window()` is
+the new predicate and it is deliberately BOTH the day window and the band
+exemption — asked separately from `grid_window()`, because the two windows can
+be made to overlap (the grid window is an owner-editable `time.*`) and what
+lifts the veto is that the day window authorises, not which window the label
+happens to name. The night window keeps §3's veto untouched.
+
+**Why it is not a loosening.** F2 is ~17 % dearer per electrical kWh than
+F1/F3. Daytime air is 8-10 K warmer and buys ~24 % more heat per kWh (measured,
+v0.5.0 replay: 0.0501 vs 0.0659 €/kWh_th). The two effects are the same size
+and point opposite ways, so refusing F2 by day never saved the heat — it moved
+the run to 23:00, colder and with a worse COP. And with the §3 windows it only
+ever refused ONE day: Saturday is F2 07:00-23:00 against a 10:00-18:00 solar
+window, while weekday F2 (07-08, 19-23) falls outside the solar window
+altogether. The veto was buying the pool one cold day a week for no saving.
+
+**What it costs — DERIVED, not measured.** No new day replay was run for this
+release. From the v0.5.0 numbers: the top-up added 3.51 €/day of spend on a
+weekday in F1, so the same run on a Saturday at F2's energy component costs
+about 0.193/0.164 = 1.18× that, i.e. **~4 € on one day a week, ~16 €/month**,
+in exchange for the pool holding its minimum on Saturdays instead of drifting
+~1.5 K below it. If that trade is ever the complaint, the lever is the same
+switch it has always been: `switch.pool_grid_day_topup` OFF restores night-only
+heating, band veto and all.
+
+**The reason line names the band** when a top-up runs in a vetoed one:
+`daytime top-up (band F2)`, on entry and while it holds. Exempt is not the same
+as hidden — that is the dearest electrical kWh the pool buys, and the reason
+line is the only place an owner sees it.
+
+### Pre-tag adversarial review — one pre-existing finding, not introduced here
+
+1. **A restart during a DAYTIME top-up does not adopt the run.**
+   `law.restore_memory()` only knows the night window (`engine._restore` passes
+   `in_grid_window` computed from `pdc_grid_start/end`), so at 15:00 with the
+   machine heating it re-derives `PDC_OFF`, and the next tick enters GRID as a
+   fresh run. **Bounded, and it pre-dates this release** — it bites every
+   daytime top-up, F1 weekdays included, and v0.5.0 shipped with it. The
+   consequences stop at: a new session bracket in the log (already discarded
+   from the COP fit, since a daytime run is never `clean`) and a reset
+   `pdc_since`. It is NOT a compressor cycle, because the actuator is idempotent
+   and the machine is already on `heat` at the same setpoint. Worth fixing on
+   its own; not worth widening this diff for.
+2. **Checked and clean.** The `SOLAR → GRID` handoff now takes over on a
+   Saturday evening instead of stopping — no extra start, one fewer stop/start
+   pair. `grid_conditions(running=True)` uses the same exemption, so a run is
+   not stopped by the clock crossing into F2 (which would have been a stop/start
+   pair at 19:00 if the owner ever widens the solar window). The band is a slow
+   step function, so the exemption introduces no new oscillation. The longest
+   reason line this produces measures 131 characters against HA's 255-char
+   state cap. §7.4 is narrowed rather than dropped: 19:30 is outside the solar
+   window, so the criterion still exercises the veto, and both the narrowing and
+   the amendment are recorded in the STORY, dated.
+
+### Still to do for this release
+
+**The live dashboard tile is done** — patched 2026-09-18 and read back verified:
+`views[0].sections[8].cards[3]` now reads "Rabbocco diurno da rete (ogni
+fascia)". Recorded with its inverse in `dashboard_v0.6.0_cards.yaml`; the patch
+carries two `test` ops on the index, because a bare `replace` against a stale
+one renames whatever card happens to be there.
+
+**The manual is now `Villa-Pool-Manual-v0.6.0.html`** (the v0.4.0 file is
+renamed, not kept alongside — two manuals and no way to tell which is current is
+worse than one that is behind). It had never been updated for v0.5.0 either, so
+the pass covered three things: §5 gains the two grid windows as a table plus the
+18/9 amendment and what it costs; the heating-session log is documented for the
+first time, including the two rules that keep it from inventing a COP; and §11's
+"il rabbocco diurno è proposto ma non implementato" — false since v0.5.0 — is
+replaced by "non insegue il prezzo", which is where the band-not-price rule now
+lives. "Le tre regole che proteggono il compressore" is now two: the F2 veto was
+never a compressor rule, it was an economic one filed in the wrong place.
+
+### Kickstart prompt for the next session
+
+> Read `CLAUDE.md` then `STORY_POOL_CONTROLLER.md`. v0.6.0 is tagged: §5.4's
+> daytime grid top-up now ignores the tariff band (night window unchanged).
+> The live tile was relabelled with it and the manual is now
+> `Villa-Pool-Manual-v0.6.0.html` — **print it to PDF**, that is the only step of
+> this release left undone. The owner still owes the cover sensor entity id, and
+> the SOLAR target's missing hysteresis is still their call. Two loose ends worth naming: a restart during a daytime top-up
+> does not adopt the run (`restore_memory` knows only the night window — see the
+> v0.6.0 review), and `tests/test_engine.py::test_live_enables_the_chlorinator`
+> plus `test_a_pool_already_doing_the_right_thing_is_not_commanded` only pass
+> between 09:00 and 21:00 because they do not freeze the clock.
+
+---
+
 ## v0.5.0 — daytime grid top-up + the heating-session log (2026-09-17)
 
 Two things the owner asked for on the same breath, and they turned out to
@@ -142,7 +236,9 @@ dashboard is storage-mode, so `dashboard_v0.4.0_cards.yaml` in this repo is the
 versioned record — including the exact inverse, two JSON Patch removes, if it
 ever has to come out.
 
-**The manual** is `Villa-Pool-Manual-v0.4.0.html`, in Italian, matching the
+**The manual** is `Villa-Pool-Manual-v0.4.0.html` *(renamed to
+`Villa-Pool-Manual-v0.6.0.html` on 18/9 — one manual, not a shelf of them)*, in
+Italian, matching the
 villa-hvac convention (those were HTML printed to PDF from a browser — Skia/PDF,
 8 pages). Print it to `Villa-Pool-Manual-v0.4.0.pdf` with Cmd-P → Save as PDF;
 the print stylesheet is A4 with 16 mm margins and avoids breaking inside
@@ -568,6 +664,9 @@ logger:
 4. **No grid intent in F2 ever** — 07:00-08:00 and 19:00-23:00 on weekdays,
    07:00-23:00 on Saturday. The reason line should say `band F2` if anything
    else would have wanted it.
+   *(Corrected 2026-09-18: read this as the NIGHT grid window only. §5.4's
+   daytime top-up now runs in F2 too, so a Saturday between 10:00 and 18:00
+   legitimately reads `grid` with `daytime top-up (band F2)` in the reason.)*
 5. **Pump intent tracks the window and the confirmation.** `would_pump_on`
    true across 08:00-20:00; `pump_confirmed` in the attributes turns true ~60 s
    after `binary_sensor.pool_pompa_in_marcia` goes on, not immediately.

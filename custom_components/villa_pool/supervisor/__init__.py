@@ -35,6 +35,7 @@ from .pdc import (
     blocking_reason,
     grid_conditions,
     grid_window,
+    in_day_topup_window,
     pdc_step,
     solar_conditions,
 )
@@ -76,6 +77,7 @@ __all__ = [
     "grid_conditions",
     "grid_window",
     "hours_missing",
+    "in_day_topup_window",
     "in_slot",
     "in_window",
     "is_confirmed",
