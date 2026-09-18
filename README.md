@@ -107,6 +107,12 @@ its minimum instead of drifting below it, so it delivers roughly twice the heat
 and the daily spend roughly doubles. Cheaper per kWh, more kWh. Turn the switch
 off for night-only heating.
 
+Since 2026-09-18 this one **ignores the tariff band**, F2 included: the warm-air
+gain (~24 %) and F2's surcharge (~17 %) are the same size, so refusing F2 by day
+did not save the heat, it just moved the run to a colder hour. In practice it
+only ever refused Saturdays. The reason line says `daytime top-up (band F2)`
+when it is paying the dear rate.
+
 `sensor.pool_last_session_cop` records what each heating run actually achieved —
 thermal kWh from the water's rise over the electrical kWh on phase A — so the COP
 model can eventually be fitted instead of guessed. Only runs that stayed wholly
@@ -124,12 +130,13 @@ Measured live; do not re-derive them (see `CLAUDE.md`):
   "no new information", never a state change, and never a reason to write.
 - **COP 2.82 at ~18 °C air**, measured overnight 16→17/9 with the pool covered
   and the compressor at full load. Use ~2.8, not 4, for night estimates.
-- **F2 is the expensive tariff band**; F1 ≈ F3. Grid heating is never allowed in
-  F2, and the decision is made on the *band*, never on a price.
+- **F2 is the expensive tariff band**; F1 ≈ F3. Night grid heating is never
+  allowed in F2 (the daytime top-up is exempt, see above), and the decision is
+  made on the *band*, never on a price.
 
 ## Tests
 
-265 tests, all pure-fast except the end-to-end ones, which run against the exact
+268 tests, all pure-fast except the end-to-end ones, which run against the exact
 deploy-target HA.
 
 ```bash

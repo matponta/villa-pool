@@ -52,7 +52,8 @@ FLAGS: tuple[Flag, ...] = (
         "Allow the PdC to heat from the grid INSIDE the solar window when the "
         "sun is not there (STORY §5.4, owner-confirmed 2026-09-17). The air is "
         "8-10 K warmer by day, so the same thermal kWh costs 30-45 % less than "
-        "at 23:00. Never in F2, whatever this says.",
+        "at 23:00 — which is why this one ignores the tariff band, F2 included "
+        "(owner amendment 2026-09-18). The night window still refuses F2.",
     ),
     Flag(
         "chlorine_target_control", "Chlorine target control", True,

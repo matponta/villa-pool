@@ -228,6 +228,11 @@ class TestCriterion04GridNeverInF2:
     the grid window to 19:00 to put 19:30 genuinely inside it — that is the only
     way to exercise "refused *even inside* the window". The band veto itself is
     pinned independently.
+
+    NOTE 2 (amendment 2026-09-18): the criterion is now about the NIGHT grid
+    window specifically. §5.4's daytime top-up is exempt from the band, so
+    "GRID is never in F2" is no longer true of the pool as a whole — 19:30 is
+    outside the solar window, which is what keeps every case below honest.
     """
 
     def test_f2_is_refused_inside_a_grid_window_that_covers_1930(self):
@@ -552,8 +557,12 @@ class TestDaytimeGridTopUp:
     so the same thermal kWh costs an estimated 30-45 % less than at 23:00, and
     F1 and F3 are within a cent of each other. Confirmed 2026-09-17, default ON.
 
-    The daily logic it produces: reach the guaranteed minimum by evening in F1;
+    The daily logic it produces: reach the guaranteed minimum by evening;
     if that did not happen, the night window is still there as a fallback.
+
+    **AMENDED 2026-09-18 (owner): the top-up ignores the tariff band.** It ran
+    in F1 only, which with the default windows meant "not on Saturdays" and
+    nothing else. The night window keeps §3's F2 veto.
     """
 
     def midday(self, water=25.6, band="F1", topup=True, headroom=0.0, day=16):
@@ -589,14 +598,53 @@ class TestDaytimeGridTopUp:
         assert dec.pdc_state == PDC_OFF
         assert "outside grid window" in dec.reason
 
-    def test_f2_is_still_refused(self):
-        """The veto that matters. Saturday is F2 from 07:00 to 23:00, so the
-        solar window sits inside the expensive band all day — and the top-up
-        must not become a way in."""
+    def test_f2_no_longer_refuses_the_day_topup(self):
+        """AMENDMENT 2026-09-18 (owner) — the top-up ignores the band.
+
+        This test asserted the exact opposite through v0.5.0, and the inversion
+        IS the change. Saturday is F2 from 07:00 to 23:00, so the solar window
+        sits inside the expensive band all day: with the default windows the
+        veto bought the pool one cold day a week and nothing else. F2 is ~17 %
+        dearer per electrical kWh; daytime air buys ~24 % more heat per kWh.
+        Waiting for 23:00 was never the cheaper answer, only the colder one.
+        """
         st, mem = self.midday(band=BAND_F2, day=19)      # Saturday
         dec, _ = run(st, mem)
+        assert dec.pdc_state == PDC_GRID
+        assert dec.pdc_setpoint == DEFAULT_MIN_TEMP
+
+    def test_an_f2_top_up_says_which_band_it_is_paying_for(self):
+        """Exempt is not the same as hidden. This is the dearest electrical kWh
+        the pool buys and the reason line is the only place it shows — on
+        entry AND while it holds, for the same reason the daytime label itself
+        is repeated."""
+        st, mem = self.midday(band=BAND_F2, day=19)
+        dec, mem = run(st, mem)
+        assert "daytime top-up (band F2)" in dec.reason
+        dec, _ = run(st.with_now(st.now + 60 * MIN), mem)
+        assert dec.pdc_state == PDC_GRID
+        assert "daytime top-up (band F2)" in dec.reason
+
+    def test_the_night_window_still_refuses_f2(self):
+        """The amendment is scoped to the daytime window. At 19:30 the air is
+        not the daytime air, so the band is the only thing that varies and §3's
+        veto stands — §7.4, which this must not have quietly retired."""
+        now = at(2026, 9, 19, 19, 30)                    # Saturday → F2
+        st = state(now, water_temp=25.0, band=BAND_F2, grid_heating=True,
+                   headroom_w=0.0, pdc_grid_start=time(19, 0))
+        dec, _ = run(st, memory(now))
         assert dec.pdc_state == PDC_OFF
         assert "band F2" in dec.reason
+
+    def test_the_exemption_follows_the_day_window_not_the_label(self):
+        """The windows are owner-editable and can be made to overlap. What
+        lifts the veto is that the DAY window authorises — not which of the two
+        `grid_window` happens to name first, which is still the night one."""
+        now = at(2026, 9, 19, 16, 0)                     # Saturday, F2, no sun
+        st = state(now, water_temp=25.6, headroom_w=0.0, band=BAND_F2,
+                   pdc_grid_start=time(15, 0))           # night window covers 16:00
+        dec, _ = run(st, memory(now))
+        assert dec.pdc_state == PDC_GRID
 
     def test_free_sun_still_wins(self):
         """The top-up is a fallback for when SOLAR conditions fail, never a

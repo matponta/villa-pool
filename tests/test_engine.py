@@ -1065,9 +1065,16 @@ async def test_turning_the_day_topup_off_restores_night_only_heating(
         assert hass.states.get("sensor.pool_pdc_state").state == "off"
 
 
-async def test_saturday_midday_is_still_refused(hass: HomeAssistant) -> None:
-    """The veto that matters: Saturday is F2 from 07:00 to 23:00, so the solar
-    window sits inside the expensive band all day."""
+async def test_saturday_midday_heats_too_and_names_the_band(
+    hass: HomeAssistant,
+) -> None:
+    """Amendment 2026-09-18: the top-up ignores the tariff band.
+
+    Saturday is F2 from 07:00 to 23:00, so the solar window sits inside the
+    expensive band all day — this is the ONLY case the old veto ever changed
+    with the default windows, and end-to-end it is now a grid run at the
+    guaranteed minimum whose reason line names the band it is paying for.
+    """
     with freeze_time("2026-09-19 12:00:00+02:00") as frozen:
         await setup_pool(hass, **{
             DEFAULT_WATER_TEMP: "25.6",
@@ -1075,12 +1082,16 @@ async def test_saturday_midday_is_still_refused(hass: HomeAssistant) -> None:
             DEFAULT_TARIFF_BAND: "F2",
         })
         mock_climate(hass)
+        calls = record_calls(hass)
         await go_live(hass)
         await tick(hass, times=3, freezer=frozen)
-        assert hass.states.get("sensor.pool_pdc_state").state == "off"
-        assert "band F2" in hass.states.get(
+        assert hass.states.get("sensor.pool_pdc_state").state == PDC_GRID
+        assert "daytime top-up (band F2)" in hass.states.get(
             "sensor.pool_supervisor_reason"
         ).state
+    temps = [t["service_data"]["temperature"]
+             for t in writes(calls, "climate", "set_temperature")]
+    assert temps and temps[0] == DEFAULT_MIN_TEMP
 
 
 async def test_the_session_sensors_start_unknown(hass: HomeAssistant) -> None:

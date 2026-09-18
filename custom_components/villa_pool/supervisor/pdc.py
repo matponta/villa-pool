@@ -47,19 +47,31 @@ GRID_NIGHT = "night"
 GRID_DAY = "day"
 
 
+def in_day_topup_window(state: PoolState) -> bool:
+    """Is §5.4's daytime top-up authorising a grid run right now?
+
+    Asked separately from `grid_window` because this is ALSO the band
+    exemption (owner amendment 2026-09-18), and the two windows may overlap
+    once the owner edits them: what the band rule turns on is whether the DAY
+    window authorises, not which of the two `grid_window` chose to name.
+    """
+    w = state.config.windows
+    return state.grid_day_topup and in_window(
+        state.now, w.pdc_solar_start, w.pdc_solar_end
+    )
+
+
 def grid_window(state: PoolState) -> str | None:
     """Which grid window `now` falls in, or None.
 
-    The daytime top-up never widens the band rule: F2 is vetoed in
-    `grid_conditions` exactly as before, which is what keeps Saturday daytime
-    (F2 07:00-23:00) out of it even though the solar window is wide open.
+    The night window is named first when both authorise: it is the one §3
+    specified, and the daytime label is what carries the extra cost warning,
+    so under-claiming it is the safe direction.
     """
     w = state.config.windows
     if in_window(state.now, w.pdc_grid_start, w.pdc_grid_end):
         return GRID_NIGHT
-    if state.grid_day_topup and in_window(
-        state.now, w.pdc_solar_start, w.pdc_solar_end
-    ):
+    if in_day_topup_window(state):
         return GRID_DAY
     return None
 
@@ -120,6 +132,16 @@ def grid_conditions(
     The refusal reason is what surfaces on `sensor.pool_supervisor_reason`, so
     §7.4's "`reason` says `band F2`" is satisfied by the band branch below.
     Reason on BANDS, never on prices — the PUN index changes monthly (§3).
+
+    **The band veto is NIGHT-ONLY since the owner amendment of 2026-09-18.**
+    §5.4's daytime top-up runs whatever the band is. §3 forbade F2 because F2
+    is ~17 % dearer per electrical kWh than F1/F3 — but the top-up exists
+    because daytime air buys ~24 % more heat per kWh, and the two are the same
+    size. Vetoing F2 by day did not make the heat cheaper, it moved the whole
+    run to 23:00 where the kWh is cheap and the COP is worse; with the default
+    windows it only ever bit on Saturday (F2 07:00-23:00 against a 10-18 solar
+    window), i.e. it bought the pool one cold day a week. The night window
+    keeps the veto: there the band is the only thing that varies.
     """
     if not state.grid_heating:
         return False, "grid heating off"
@@ -127,7 +149,7 @@ def grid_conditions(
         return False, "water temp unknown"
     if grid_window(state) is None:
         return False, "outside grid window"
-    if state.band in GRID_FORBIDDEN_BANDS:
+    if state.band in GRID_FORBIDDEN_BANDS and not in_day_topup_window(state):
         return False, f"band {state.band}"
     limit = state.config.min_temp + (MIN_TEMP_HYSTERESIS if running else 0.0)
     if state.water_temp >= limit:
@@ -220,12 +242,7 @@ def pdc_step(
             return _stop(mem, now, keep_refusal or "grid no longer allowed", cfg)
         # Named while it RUNS, not only when it starts: the entry reason scrolls
         # past in one tick, and these two cost very different amounts.
-        return _hold(
-            mem, PDC_GRID,
-            "heating on grid — daytime top-up"
-            if grid_window(state) == GRID_DAY else "heating on grid",
-            cfg,
-        )
+        return _hold(mem, PDC_GRID, f"heating on grid{_grid_label(state)}", cfg)
 
     # --- transitions out of OFF ----------------------------------------------
     min_off_done = _elapsed(mem.pdc_last_stop, now, PDC_MIN_OFF_S)
@@ -236,18 +253,35 @@ def pdc_step(
     if grid_ok_now:
         if not min_off_done:
             return _hold(mem, PDC_OFF, "grid due but MIN_OFF not elapsed", cfg)
-        where = grid_window(state)
+        if grid_window(state) == GRID_DAY:
+            return _enter(
+                mem, now, PDC_GRID,
+                f"water below minimum{_grid_label(state)}", cfg,
+            )
         return _enter(
-            mem, now, PDC_GRID,
-            "water below minimum — daytime top-up" if where == GRID_DAY
-            else "water below minimum in grid window",
-            cfg,
+            mem, now, PDC_GRID, "water below minimum in grid window", cfg,
         )
 
     return _hold(mem, PDC_OFF, grid_refusal or "no heating demand", cfg)
 
 
 # --- small helpers, kept boring so the machine above reads as a table --------
+
+def _grid_label(state: PoolState) -> str:
+    """The cost-relevant tail of a GRID reason line.
+
+    Empty for a night run. The daytime one is named because the owner has to
+    be able to tell the two apart at a glance, and since 2026-09-18 it also
+    names the band when it is one §3 would have refused — same argument one
+    level down: that is the dearest electrical kWh the pool buys, and the line
+    is the only place it shows.
+    """
+    if grid_window(state) != GRID_DAY:
+        return ""
+    if state.band in GRID_FORBIDDEN_BANDS:
+        return f" — daytime top-up (band {state.band})"
+    return " — daytime top-up"
+
 
 def _setpoint_for(pdc_state: str, cfg) -> float | None:
     if pdc_state == PDC_SOLAR:

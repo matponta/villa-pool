@@ -24,7 +24,7 @@ skeleton and conventions and shares nothing at runtime.**
 Target: Home Assistant **2026.8.3** (Python ≥ 3.14). Single instance,
 config-flow hub.
 
-## Status: v0.4.0, deployed and actuating since 2026-09-17 20:04.
+## Status: v0.6.0 in the repo; deployed and actuating since 2026-09-17 20:04.
 
 **The integration is live on the owner's HA and `switch.pool_dry_run` is OFF.**
 Anything in this repo that reads as "not yet deployed" is stale — `NEXT_SESSION.md`
@@ -115,9 +115,21 @@ decides which window authorises a grid run, and returns `night` or `day` so the
 reason line can name it — both on entry AND while it holds, because the entry
 reason scrolls past in one tick and these two cost very different amounts.
 
-The band veto is untouched and is what makes this safe: Saturday is F2 from
-07:00 to 23:00, so the solar window sits inside the expensive band all day and
-the top-up cannot become a way in.
+**The band veto is night-only (owner amendment, 2026-09-18).** v0.5.0 kept §3's
+F2 refusal over the top-up, and with the §3 windows that had exactly one effect:
+Saturday is F2 07:00-23:00 against a 10:00-18:00 solar window, so Saturday was
+the one day the pool could not top up (weekday F2, 07-08 and 19-23, is outside
+the solar window altogether). It also did not save the heat — it deferred the
+run to 23:00, where the kWh is ~17 % cheaper and the air 8-10 K colder. Same
+size, opposite signs. `pdc.in_day_topup_window()` is now both the day window
+*and* the band exemption, asked separately from `grid_window()` because the two
+windows can be made to overlap and what lifts the veto is that the DAY window
+authorises — not which window the label names. The night window keeps the veto,
+which is what §7.4 is now about.
+
+The reason line names the band when a top-up runs in a vetoed one
+(`daytime top-up (band F2)`). Exempt is not the same as hidden: that is the
+dearest electrical kWh the pool buys and the line is the only place it shows.
 
 **It roughly doubles the daily spend.** Measured by replaying a September day:
 the marginal cost is 24 % lower by day (0.0501 vs 0.0659 €/kWh_th) and it costs
@@ -290,8 +302,9 @@ the same situation restarting the machine when the anchor is dropped.
   prevent. Judge nothing about the PdC for 10-15 min after a command.
 - **Never enable the chlorinator below 80 % pump speed** until the step-down
   test establishes the cell's real flow-switch minimum (§6, §9).
-- **F2 is never a grid-heating band** (§3). Reason on *bands*, never on prices —
-  the PUN index changes monthly.
+- **F2 is never a NIGHT grid-heating band** (§3, narrowed by the 2026-09-18
+  amendment — §5.4's daytime top-up ignores the band). Reason on *bands*, never
+  on prices — the PUN index changes monthly.
 - **Do not turn the pump off on unload.** Release nothing destructive; just stop
   deciding (§6). Pinned by `test_unload_releases_nothing_destructive`.
 - **Do not test writes with `async_mock_service` for `switch`/`number`/
@@ -327,7 +340,10 @@ These are recorded rather than silently resolved:
    23:00-07:00, so 19:30 is outside it and the band veto is never reached. The
    acceptance test therefore widens the grid window to 19:00 (they are
    owner-editable `time.*` entities) so the clause is genuinely exercised, and
-   pins the band veto separately. See `TestCriterion04GridNeverInF2`.
+   pins the band veto separately. See `TestCriterion04GridNeverInF2`. Since the
+   2026-09-18 amendment the criterion is also narrower than it reads: it is
+   about the night window, and 19:30 being outside the solar window is what
+   keeps it exercising the veto at all.
 2. **"Free hours" is unreachable with the default windows.** §5.3 wants chlorine
    enabled as soon as the PdC enters SOLAR "even before the chlorine window
    opens" — but the solar window (10-18) lies wholly inside the chlorine window
@@ -412,8 +428,10 @@ future re-deploy.
   alert. Until then every cover rule is inert by construction.
 - Check `automation.pool_test_cop_notturno` is disabled before any actuating
   release — the integration must not fight a running one-shot (§6).
-- **§5.4's daytime GRID top-up is still PROPOSED** and unimplemented;
-  `switch.pool_grid_day_topup` does not exist. Owner to confirm.
+- **The owner manual is still `Villa-Pool-Manual-v0.4.0.html`.** It predates the
+  daytime top-up entirely and still says *fascia diversa da F2* in the PdC-states
+  table and the "minima garantita" row. It wants a v0.6.0 pass, not a patch. (The
+  live dashboard tile was relabelled on 2026-09-18 — `dashboard_v0.6.0_cards.yaml`.)
 - **§9's "flow at 30 %" is now load-bearing.** `binary_sensor.pool_pompa_in_marcia`
   needs flow >= `input_number.pool_portata_minima` (1 m3/h). If the pump at
   `antifreeze_speed` does not reach that, the sensor reads OFF while the pump is

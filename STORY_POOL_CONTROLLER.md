@@ -132,8 +132,8 @@ alert automations (`pool_allerta_*`) — they are the owner's independent watchd
 | Battery vs pool | Pool first. Headroom stays PV − house − pool, no SOC gate. Thresholds 3000 W on / 2500 W off. |
 | PdC from grid | Allowed from day one (`grid_heating` default ON). Allowed with the cover open. "Grid" in practice = battery first, then grid (Huawei self-consumption): say so in the manual. |
 | Guaranteed minimum | **27.0 °C**, hysteresis +0.5 (stop at 27.5). Solar target 28.0. |
-| Tariff | Sorgenia, PUN-indexed per band. giu-26 energy component ≈ F1 0.164 · F2 0.193 · F3 0.166 €/kWh. **F1 ≈ F3, F2 is the expensive band** → grid heating is never allowed in F2. Reason on bands, never on prices (the index changes monthly). |
-| Windows | Same every day → time entities, not schedules. Pump 08:00–20:00 · PdC solar 10:00–18:00 · PdC grid 23:00–07:00 (crosses midnight) · chlorine 09:00–21:00. **Open (17/9): §5.4 proposes a daytime GRID top-up in F1 because COP is far better in warm air — owner to confirm.** |
+| Tariff | Sorgenia, PUN-indexed per band. giu-26 energy component ≈ F1 0.164 · F2 0.193 · F3 0.166 €/kWh. **F1 ≈ F3, F2 is the expensive band** → grid heating is never allowed in F2. Reason on bands, never on prices (the index changes monthly). *(Amended 2026-09-18: the veto is the **night** window's. §5.4's daytime top-up runs in any band, F2 included — warm air buys ~24 % more heat per kWh, which is the same size as F2's ~17 % surcharge, so the veto only ever moved the run to a colder hour. See §5.4.)* |
+| Windows | Same every day → time entities, not schedules. Pump 08:00–20:00 · PdC solar 10:00–18:00 · PdC grid 23:00–07:00 (crosses midnight) · chlorine 09:00–21:00. *(Confirmed 17/9 and shipped: §5.4's daytime GRID top-up, `switch.pool_grid_day_topup`, default ON — band-independent since the 18/9 amendment.)* |
 | COP | Measured 2.82 (night, ~18 °C air, 95 Hz). Model COP vs outdoor air per §5.4; use it for estimates, log sessions to calibrate. |
 | Filtration speed | 80 % for now (bypass calibrated at 80 %, ΔT 2 K; chlorinator flow-switch minimum unknown). Step-down test later. |
 | Winter mode | Pump ≥ 2 h/day from 12:00 at 80 % with chlorine enabled; PdC off. **Antifreeze**: outdoor < 0 °C → pump continuous at `antifreeze_speed` (default 30 %, **tunable 30–80**), chlorinator OFF, release at ≥ +2 °C. *(Amended 2026-09-17: antifreeze also runs in `manual`/`closed` — see §5.5.)* |
@@ -202,7 +202,11 @@ the rest.
   ≥ solar_target. Setpoint in SOLAR = solar_target.
 - `OFF → GRID`: `grid_heating` on AND water < min_temp AND grid window AND
   `fascia_oraria != F2` AND pump in marcia. Setpoint in GRID = min_temp.
-- `GRID → OFF`: water ≥ min_temp + 0.5; OR grid window ends; OR band becomes F2.
+  *(Amended 2026-09-18: the band test applies to the NIGHT grid window only.
+  Inside §5.4's daytime window the band is not read at all.)*
+- `GRID → OFF`: water ≥ min_temp + 0.5; OR grid window ends; OR band becomes F2
+  *(night window only, as above — a daytime top-up is not stopped by the band
+  turning F2, which is what stops it stopping itself every Saturday at 07:00)*.
 - `GRID → SOLAR`: solar ok 10 min. `SOLAR → GRID`: solar not ok AND water <
   min_temp AND grid_heating AND grid window.
 - `* → BLOCKED`: pump not in marcia, `pool_pdc_guasto`, `pompa_piscina_problem`,
@@ -256,9 +260,23 @@ model until more sessions are logged.
 
 **Consequence for GRID — CONFIRMED by the owner 2026-09-17, shipped in v0.5.0.**
 `switch.pool_grid_day_topup` exists and defaults ON. It allows GRID inside the
-SOLAR window when SOLAR conditions fail; the night window stays as the fallback
-and the F2 veto is untouched (which is what keeps Saturday daytime out, since
-Sat is F2 from 07:00 to 23:00). Replayed over a September day: the marginal cost
+SOLAR window when SOLAR conditions fail; the night window stays as the fallback.
+
+> **AMENDMENT 2026-09-18 (owner) — the daytime top-up ignores the tariff band.**
+> v0.5.0 kept §3's F2 veto over the top-up. With the §3 windows that had exactly
+> one effect: Saturday is F2 from 07:00 to 23:00 and the solar window is
+> 10:00-18:00, so Saturday was the one day the pool could not top up by day
+> (weekday F2 — 07-08 and 19-23 — falls outside the solar window entirely). And
+> the veto did not save the heat, it deferred it to 23:00, where the kWh is
+> ~17 % cheaper but the air is 8-10 K colder and the COP correspondingly worse.
+> Those two effects are the same size, so the veto was buying the pool one cold
+> day a week for no saving. The **night** window keeps the veto: there nothing
+> varies but the band, so there F2 is simply dearer. The reason line names the
+> band when a top-up runs in a vetoed one (`daytime top-up (band F2)`) — the
+> exemption is not a licence to hide the dearest kWh the pool buys. Acceptance
+> criterion §7.4 narrows to the night window as a result; see the note there.
+
+Replayed over a September day: the marginal cost
 is **0.0501 vs 0.0659 €/kWh_th, 24 % cheaper by day** — consistent with the
 30-45 % estimated below, which assumed colder October nights. It costs one extra
 compressor start a day, not a string of them. **It also roughly doubles the daily
@@ -340,6 +358,11 @@ expires by itself after 4 h, where `closed` lasts months.
    cloud does not stop it before MIN_ON.
 4. Saturday 19:30 (F2): GRID is refused even inside the grid window; `reason`
    says `band F2`.
+   **NARROWED 2026-09-18 by the §5.4 amendment**: this is now a statement about
+   the NIGHT grid window. 19:30 is outside the solar window, so the criterion
+   itself is untouched and still pinned in `TestCriterion04GridNeverInF2` — but
+   "GRID is never in F2" is no longer true of the pool as a whole. Saturday
+   midday in F2 now heats, and that is pinned too, in `TestDaytimeGridTopUp`.
 5. Pump reported `problem` while PdC in SOLAR → PdC `off` within one tick,
    chlorine off, notification, state BLOCKED with reason.
 6. Cover closed 25 h → chlorine off even with pool_in_use; reopen → resumes.
