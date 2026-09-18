@@ -1238,6 +1238,57 @@ async def test_restart_mid_grid_resumes_grid(hass: HomeAssistant) -> None:
         assert hass.states.get("sensor.pool_pdc_state").state == PDC_GRID
 
 
+async def test_restart_mid_daytime_topup_resumes_it(hass: HomeAssistant) -> None:
+    """§7.10 for §5.4's window — and this is the wiring, not the law.
+
+    `_restore` used to hand `restore_memory` the NIGHT window alone, so a
+    restart at 15:00 mid top-up re-derived OFF and the next tick entered GRID
+    again as a fresh run. `sensor.pool_pdc_state` said GRID either way; what
+    told them apart is the reason, which is the HOLDING one only if the run was
+    adopted (a fresh entry says "water below minimum").
+    """
+    with freeze_time("2026-09-17 15:00:00+02:00") as frozen:   # Thursday, F1
+        await setup_pool(hass, **{
+            DEFAULT_WATER_TEMP: "25.6",
+            DEFAULT_TARIFF_BAND: "F1",
+            "binary_sensor.pool_pdc_acceso": "on",   # it was heating before
+        })
+        await tick(hass, freezer=frozen)
+        assert hass.states.get("sensor.pool_pdc_state").state == PDC_GRID
+        reason = hass.states.get("sensor.pool_supervisor_reason").state
+        assert "heating on grid — daytime top-up" in reason
+
+
+async def test_a_restart_mid_run_does_not_bracket_a_session(
+    hass: HomeAssistant,
+) -> None:
+    """`session.py`: "A run already in progress at startup is NOT adopted."
+
+    The rule is enforced through `was_running`, which the engine has to seed
+    from the RESTORED memory. Seeded blindly False, the first tick after a
+    restart that adopts a run reads as a false->true edge: it brackets the tail
+    of the run, and on the night path publishes it as `clean` — a COP point
+    measuring a ΔT the bracket did not cover.
+    """
+    with freeze_time("2026-09-17 01:00:00+02:00") as frozen:
+        await setup_pool(hass, pdc_temperature=DEFAULT_MIN_TEMP, **{
+            DEFAULT_WATER_TEMP: "26.2",
+            DEFAULT_TARIFF_BAND: "F3",
+            "binary_sensor.pool_pdc_acceso": "on",     # heating before we booted
+            "sensor.shellypro3em63_a4f00fcd881c_phase_a_energy": "100.0",
+        })
+        await tick(hass, freezer=frozen)
+        assert hass.states.get("sensor.pool_pdc_state").state == PDC_GRID
+        # 07:00: the window closes and the run ends.
+        frozen.tick(timedelta(hours=6, minutes=30))
+        hass.states.async_set(DEFAULT_WATER_TEMP, "26.7")
+        hass.states.async_set(
+            "sensor.shellypro3em63_a4f00fcd881c_phase_a_energy", "118.6"
+        )
+        await tick(hass, times=2, freezer=frozen)
+    assert hass.states.get("sensor.pool_last_session_cop").state == "unavailable"
+
+
 # --- unload ------------------------------------------------------------------
 
 async def test_unload_releases_nothing_destructive(hass: HomeAssistant) -> None:

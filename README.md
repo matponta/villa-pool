@@ -7,8 +7,9 @@ chlorinator state, and coordinates the three as one hydraulic system:
 filtration windows, a guaranteed minimum water temperature, solar-first
 heating, chlorination to a daily target, and winter antifreeze.
 
-> **Status: v0.5.0 — daytime grid top-up and the heating-session log, on top of
-> the pump, the chlorinator, the heat pump, winter and antifreeze.** `switch.pool_dry_run` is **ON by
+> **Status: v0.7.0 — the restart path adopts a run the law would keep, on top of
+> v0.6.0's band-exempt daytime top-up, the heating-session log, the pump, the
+> chlorinator, the heat pump, winter and antifreeze.** `switch.pool_dry_run` is **ON by
 > default** and is what gates every write, so a fresh install still only
 > decides, reports and logs. Turning it off is the owner's deliberate act and
 > is announced in the log.

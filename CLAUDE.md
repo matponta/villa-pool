@@ -131,6 +131,15 @@ The reason line names the band when a top-up runs in a vetoed one
 (`daytime top-up (band F2)`). Exempt is not the same as hidden: that is the
 dearest electrical kWh the pool buys and the line is the only place it shows.
 
+**A restart mid top-up adopts the run** (v0.7.0). `restore_memory` used to ask
+its own questions about windows and bands, and the copies drifted twice in two
+days — first when the daytime window appeared, then when this amendment made the
+veto night-only. It is now handed `grid_conditions(state, running=True)`'s own
+answer and holds no opinion, so **the supervisor adopts exactly what the law
+would authorise this tick**. Adopting anything else is worse than adopting
+nothing: the next tick refuses it, `_stop` fires, and the supervisor stops a run
+it never began.
+
 **It roughly doubles the daily spend.** Measured by replaying a September day:
 the marginal cost is 24 % lower by day (0.0501 vs 0.0659 €/kWh_th) and it costs
 one extra compressor start, but the pool now *reaches and holds* the minimum
@@ -163,7 +172,10 @@ Two rules keep it honest, and both matter more than completeness:
 It brackets on the SUPERVISOR's state, not `pool_pdc_acceso`: the machine's own
 flag is cloud-polled and flickers, and a flicker would chop one run into several.
 A run already going at startup is not adopted — its start reading was never
-taken.
+taken. That rule is enforced by `was_running`, which the engine seeds from the
+*restored* memory (v0.7.0): seeded blindly False, a restart that adopts a run
+reads as a false->true edge and brackets the tail of it, then publishes it as
+`clean` because it is a night run.
 
 ### The PdC is the lever that can be damaged by being asked twice
 
@@ -316,7 +328,11 @@ the same situation restarting the machine when the anchor is dropped.
   overwritten. (The v0.1.0 dry-run tests were weaker than they looked for
   exactly this reason.)
 - **On restart, re-derive the PdC state** from `pool_pdc_acceso` + water temp;
-  do not assume OFF. `restore_memory` also adopts a pump that is already in
+  do not assume OFF. Whether a running machine is ADOPTED is
+  `grid_conditions`' answer and nothing else — asked separately it missed
+  §5.4's daytime window, then the 2026-09-18 band amendment, and a restart mid
+  top-up re-derived OFF while the machine was genuinely heating.
+  `restore_memory` also adopts a pump that is already in
   marcia — the 60 s debounce filters a *fresh transition*, and is not a reason
   to re-prove a steady state that predates the restart. Without that, every
   restart would write `off` → `heat` and put a spurious cycle on the compressor.

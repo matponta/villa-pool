@@ -500,8 +500,7 @@ class TestCriterion10RestartDuringGrid:
         now = at(2026, 9, 17, 1, 0)
         mem = restore_memory(mono=now, pdc_running=True, pump_running=True,
                              water_temp=26.0,
-                             min_temp=DEFAULT_MIN_TEMP, band=BAND_F3,
-                             grid_heating=True, in_grid_window=True,
+                             min_temp=DEFAULT_MIN_TEMP, grid_ok=True,
                              solar_ok=False)
         assert mem.pdc_state == PDC_GRID
 
@@ -511,8 +510,7 @@ class TestCriterion10RestartDuringGrid:
         now = at(2026, 9, 17, 1, 0)
         mem = restore_memory(mono=now, pdc_running=False, pump_running=True,
                              water_temp=27.6,
-                             min_temp=DEFAULT_MIN_TEMP, band=BAND_F3,
-                             grid_heating=True, in_grid_window=True,
+                             min_temp=DEFAULT_MIN_TEMP, grid_ok=True,
                              solar_ok=False)
         assert mem.pdc_state == PDC_OFF
 
@@ -524,8 +522,7 @@ class TestCriterion10RestartDuringGrid:
         now = at(2026, 9, 17, 1, 0)
         mem = restore_memory(mono=now, pdc_running=True, pump_running=True,
                              water_temp=26.0,
-                             min_temp=DEFAULT_MIN_TEMP, band=BAND_F3,
-                             grid_heating=True, in_grid_window=True,
+                             min_temp=DEFAULT_MIN_TEMP, grid_ok=True,
                              solar_ok=False)
         st = state(now, water_temp=26.0, band=BAND_F3, grid_heating=True)
         dec, mem2 = run(st, mem)
@@ -542,8 +539,7 @@ class TestCriterion10RestartDuringGrid:
 
         now = at(2026, 9, 17, 1, 0)
         mem = restore_memory(mono=now, pdc_running=running, water_temp=water,
-                             min_temp=DEFAULT_MIN_TEMP, band=BAND_F3,
-                             grid_heating=True, in_grid_window=True,
+                             min_temp=DEFAULT_MIN_TEMP, grid_ok=True,
                              solar_ok=False)
         assert mem.pdc_state == expected
 
@@ -689,3 +685,89 @@ class TestDaytimeGridTopUp:
         dec, _ = run(st, memory(now))
         assert dec.pdc_state == PDC_GRID
         assert "grid window" in dec.reason
+
+
+# --- §7.10 x §5.4 ------------------------------------------------------------
+
+class TestRestartDuringADaytimeTopUp:
+    """§7.10 applied to the window §5.4 added: a restart at 15:00 mid top-up.
+
+    §7.10 is written about 01:00 because the night window was the only one a
+    grid run could happen in when it was written. `restore_memory` was still
+    being handed the night window alone, so a restart mid top-up re-derived OFF
+    while the machine was genuinely heating, and the next tick entered GRID
+    again as a fresh run — bounded at the relay (the actuator is idempotent and
+    the PdC is already on `heat` at the same setpoint, so NOT an extra
+    compressor cycle) but it reset `pdc_since` and bracketed a session that
+    never happened.
+
+    The fix is that `restore_memory` no longer holds an opinion: it is handed
+    `grid_conditions`' own answer, so **it adopts exactly what the law would
+    authorise this tick** — through the daytime window, and through the
+    2026-09-18 band amendment, without knowing about either.
+    """
+
+    def restored(self, *, water=25.6, band="F1", topup=True, day=17, hh=15):
+        """The state at `hh`:00 and the Memory a restart there comes back with.
+
+        15:00 is inside the 10-18 solar window and outside the 23-07 night one;
+        17/9/2026 is a Thursday, 19/9 a Saturday.
+        """
+        from custom_components.villa_pool.supervisor import (
+            grid_conditions, restore_memory,
+        )
+
+        now = at(2026, 9, day, hh, 0)
+        st = state(now, water_temp=water, headroom_w=0.0, band=band,
+                   grid_day_topup=topup)
+        return st, restore_memory(
+            mono=now, pdc_running=True, pump_running=True, water_temp=water,
+            min_temp=DEFAULT_MIN_TEMP,
+            grid_ok=grid_conditions(st, running=True)[0],
+            solar_ok=False,
+        )
+
+    def test_the_run_is_adopted(self):
+        _, mem = self.restored()
+        assert mem.pdc_state == PDC_GRID
+
+    def test_the_next_tick_continues_it_rather_than_starting_it(self):
+        """The discriminator: `pdc_since` survives, so this is one run and not
+        two. A fresh entry would re-stamp it and bracket a new session."""
+        st, mem = self.restored()
+        dec, mem2 = run(st, mem)
+        assert dec.pdc_state == PDC_GRID
+        assert mem2.pdc_since == mem.pdc_since
+        assert "heating on grid" in dec.reason      # holding, not entering
+
+    def test_with_the_top_up_off_the_run_is_left_alone(self):
+        """Nothing authorises a grid run at 15:00 with the switch off, so the
+        machine is somebody else's — most likely the owner's own one-shot."""
+        _, mem = self.restored(topup=False)
+        assert mem.pdc_state == PDC_OFF
+
+    def test_hot_enough_still_wins(self):
+        """Whatever the relay says, a pool above min+0.5 has no run to adopt."""
+        _, mem = self.restored(water=27.6)
+        assert mem.pdc_state == PDC_OFF
+
+    @pytest.mark.parametrize("hh,band,expected", [
+        # The amendment of 2026-09-18: the daytime top-up ignores the band...
+        (15, BAND_F2, PDC_GRID),
+        # ...and the night window does not. Saturday either way.
+        (1, BAND_F2, PDC_OFF),
+        (15, "F1", PDC_GRID),
+        (1, BAND_F3, PDC_GRID),
+    ])
+    def test_adoption_tracks_the_law_it_does_not_restate_it(
+        self, hh, band, expected
+    ):
+        """The invariant worth pinning, now that `grid_conditions` is the only
+        opinion: whatever the law would keep running, the restore adopts.
+
+        Both halves of the band rule fall out of it without `restore_memory`
+        knowing a band from a window — which is the point, because it is the
+        hand-copy of exactly these two rules that drifted twice in two days.
+        """
+        _, mem = self.restored(hh=hh, band=band, day=19)
+        assert mem.pdc_state == expected

@@ -32,7 +32,6 @@ from ..const import (
     PDC_SOLAR,
     POSTRUN_S,
     PUMP_CONFIRM_S,
-    GRID_FORBIDDEN_BANDS,
 )
 from .chlorine import catchup_active, chlorine_decision, cover_cutoff, hours_missing
 from .model import Decision, Memory, PoolState
@@ -304,9 +303,7 @@ def restore_memory(
     pdc_running: bool | None,
     water_temp: float | None,
     min_temp: float,
-    band: str | None,
-    grid_heating: bool,
-    in_grid_window: bool,
+    grid_ok: bool,
     solar_ok: bool,
     pump_running: bool | None = None,
     outdoor_temp: float | None = None,
@@ -332,6 +329,21 @@ def restore_memory(
     restart reads as "pump not in marcia", which would block the PdC and write
     `off` -> `heat`: precisely the spurious extra start §7.10 forbids.
 
+    **`grid_ok` is `grid_conditions(state, running=True)`'s own answer**, and
+    this function no longer forms an opinion about windows, bands or the
+    guaranteed minimum. It used to ask them itself, and the copies drifted
+    twice in two days: first when §5.4's daytime top-up added a second
+    authorising window (a restart mid top-up re-derived OFF while the machine
+    was genuinely heating), then when the 2026-09-18 amendment made the band
+    veto night-only.
+
+    The invariant the parameter buys is the one that matters: **the supervisor
+    adopts exactly what the law would authorise this tick**. Adopting anything
+    else is worse than adopting nothing — the next tick refuses it and `_stop`
+    fires, so the supervisor stops a run it never began and stamps a MIN_OFF the
+    compressor has not earned. `running=True` is the correct side of §5.2's
+    hysteresis for a machine that is already heating.
+
     **Antifreeze is re-derived against the RELEASE threshold**, not the engage
     one. The latch is history we cannot recover: at +1 °C, inside the 0..+2
     band, a restart cannot tell whether antifreeze was running. Re-deriving
@@ -350,7 +362,7 @@ def restore_memory(
         pdc_state = PDC_OFF
     elif solar_ok:
         pdc_state = PDC_SOLAR
-    elif in_grid_window and grid_heating and band not in GRID_FORBIDDEN_BANDS:
+    elif grid_ok:
         pdc_state = PDC_GRID
     else:
         # Running, but nothing we recognise authorises it — most likely the

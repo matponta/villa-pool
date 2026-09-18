@@ -42,6 +42,93 @@ discovering it during a reinstall.
 
 ---
 
+## v0.7.0 — a restart mid daytime top-up (2026-09-18)
+
+One defect, one more found reviewing the fix for it, and a near-miss with the
+release below that is worth recording.
+
+**`restore_memory` re-derived the PdC state from its own copy of the grid
+rules.** `engine._restore` asked `in_window(now, pdc_grid_start, pdc_grid_end)`
+— the NIGHT window — so a restart at 15:00 during a §5.4 daytime top-up fell
+through to "nothing we recognise authorises it" and re-derived `PDC_OFF` while
+the machine was genuinely heating. The next tick entered GRID again as a *fresh*
+run.
+
+**What it cost**, since it is easy to over-state: nothing at the compressor. The
+actuator is idempotent and the PdC was already on `heat` at the same setpoint,
+so no command was sent and no cycle added. What it cost was a reset `pdc_since`
+and a session bracket that never happened.
+
+**The fix is to stop having an opinion.** `restore_memory` now takes
+`grid_ok: bool` — `grid_conditions(state, running=True)`'s own answer — and no
+longer takes `band`, `grid_heating` or a window at all. The invariant is the one
+that matters: **the supervisor adopts exactly what the law would authorise this
+tick.** Adopting anything else is worse than adopting nothing, because the next
+tick refuses it, `_stop` fires, and the supervisor stops a run it never began
+and stamps a MIN_OFF the compressor has not earned.
+
+**278 tests.**
+
+### The near-miss, and why the shape of the fix changed
+
+This was first written the obvious way: pass `grid_window()`'s answer instead of
+a bool, and keep a hand-written band veto beside it. That was drafted against a
+checkout from before v0.6.0 merged, and it asserted — in a test, in CLAUDE.md
+and in this file — that the F2 veto applies to both windows. **v0.6.0 landed the
+exact opposite while it was being written**, and the branch had to be redone.
+
+The lesson is not "fetch before starting", though that too. It is that the same
+rule was written down in two places and the copies drifted **twice in two
+days**: once when §5.4 added a second authorising window, once when the
+2026-09-18 amendment made the veto night-only. The second copy is now deleted
+rather than corrected, which is why `grid_ok` is a bool from the law and not a
+richer set of parameters that would let it drift a third time. Pinned by
+`test_adoption_tracks_the_law_it_does_not_restate_it`, which asserts both halves
+of the band rule through the restore path without `restore_memory` knowing a
+band from a window.
+
+### Pre-tag adversarial review — one more real defect
+
+1. **A restart that adopts a run brackets a session for it.** `session.py` says
+   in its own docstring that "a run already in progress at startup is NOT
+   adopted", and enforces it through `was_running` — which `engine.__init__`
+   seeds `False` unconditionally. So the first tick after a restart that adopts
+   a run reads as a false->true edge, opens a bracket at the restart instant,
+   and on the night path publishes it as `clean`: a COP point measuring a ΔT the
+   bracket did not cover. **This is a v0.5.0 defect on the night path already**,
+   not something this release introduced — but the fix above would have extended
+   it to every daytime top-up, which is how it surfaced. `_pdc_was_running` is
+   now seeded from the restored memory. Confirmed by probe before fixing; pinned
+   by `test_a_restart_mid_run_does_not_bracket_a_session`.
+
+Also checked, and clean: the night path restores exactly as it did; `_restore`
+reads `grid_day_topup` (through `grid_conditions`) on the same settings path
+`grid_heating` and `min_temp` already used, and the engine starts after the
+platforms, so the switch has restored by then; `session.py`'s `in_night_window`
+still uses the night window alone, which is what `all_night` means; a restart
+with the water temp unknown now declines to adopt, where it used to adopt and
+then stop — the better of the two.
+
+**The pure tests could not have caught the original defect.** It was in
+`engine.py`'s call, and every `supervisor/` test passed throughout. The test
+that fails against the old wiring is `test_restart_mid_daytime_topup_resumes_it`,
+and it has to assert on the *reason*: `sensor.pool_pdc_state` said GRID either
+way, because the next tick started a new run. "heating on grid" (holding) vs
+"water below minimum" (entering) is the whole difference. Verified failing
+against a simulated old `_restore` before being kept.
+
+### Noticed in passing, not fixed
+
+`engine.band_forbidden()` has no callers. It predates this branch; left alone
+because deleting it is not this release's subject.
+
+### Still to do for this release
+
+Nothing HA-side. No new entity, no dashboard card, no automation to retire — it
+is a restart-path fix. Upgrade and restart.
+
+---
+
 ## v0.6.0 — the daytime top-up ignores the tariff band (2026-09-18)
 
 One owner decision, one condition, and the documentation that hangs off it.
