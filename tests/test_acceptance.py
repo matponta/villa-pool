@@ -27,7 +27,7 @@ from custom_components.villa_pool.const import (
     PDC_OFF,
     PDC_SOLAR,
 )
-from custom_components.villa_pool.supervisor import decide
+from custom_components.villa_pool.supervisor import GRID_DAY, GRID_NIGHT, decide
 from tests.helpers import at, memory, state
 
 MIN = timedelta(minutes=1)
@@ -496,7 +496,7 @@ class TestCriterion10RestartDuringGrid:
         mem = restore_memory(mono=now, pdc_running=True, pump_running=True,
                              water_temp=26.0,
                              min_temp=DEFAULT_MIN_TEMP, band=BAND_F3,
-                             grid_heating=True, in_grid_window=True,
+                             grid_heating=True, grid_window=GRID_NIGHT,
                              solar_ok=False)
         assert mem.pdc_state == PDC_GRID
 
@@ -507,7 +507,7 @@ class TestCriterion10RestartDuringGrid:
         mem = restore_memory(mono=now, pdc_running=False, pump_running=True,
                              water_temp=27.6,
                              min_temp=DEFAULT_MIN_TEMP, band=BAND_F3,
-                             grid_heating=True, in_grid_window=True,
+                             grid_heating=True, grid_window=GRID_NIGHT,
                              solar_ok=False)
         assert mem.pdc_state == PDC_OFF
 
@@ -520,7 +520,7 @@ class TestCriterion10RestartDuringGrid:
         mem = restore_memory(mono=now, pdc_running=True, pump_running=True,
                              water_temp=26.0,
                              min_temp=DEFAULT_MIN_TEMP, band=BAND_F3,
-                             grid_heating=True, in_grid_window=True,
+                             grid_heating=True, grid_window=GRID_NIGHT,
                              solar_ok=False)
         st = state(now, water_temp=26.0, band=BAND_F3, grid_heating=True)
         dec, mem2 = run(st, mem)
@@ -538,7 +538,7 @@ class TestCriterion10RestartDuringGrid:
         now = at(2026, 9, 17, 1, 0)
         mem = restore_memory(mono=now, pdc_running=running, water_temp=water,
                              min_temp=DEFAULT_MIN_TEMP, band=BAND_F3,
-                             grid_heating=True, in_grid_window=True,
+                             grid_heating=True, grid_window=GRID_NIGHT,
                              solar_ok=False)
         assert mem.pdc_state == expected
 
@@ -641,3 +641,81 @@ class TestDaytimeGridTopUp:
         dec, _ = run(st, memory(now))
         assert dec.pdc_state == PDC_GRID
         assert "grid window" in dec.reason
+
+
+# --- §7.10 x §5.4 ------------------------------------------------------------
+
+class TestRestartDuringADaytimeTopUp:
+    """§7.10 applied to the window §5.4 added: a restart at 15:00 mid top-up.
+
+    §7.10 is written about 01:00 because when it was written the night window
+    was the only one a grid run could happen in. The daytime top-up made
+    daytime grid runs ordinary, and `restore_memory` was still being handed the
+    night window alone — so a restart mid top-up re-derived OFF while the
+    machine was genuinely heating, and the next tick entered GRID again as a
+    fresh run.
+
+    Bounded at the relay (the actuator is idempotent and the PdC is already on
+    `heat` at the same setpoint, so it is NOT an extra compressor cycle) but it
+    reset `pdc_since` and opened a session bracket that never happened.
+    """
+
+    def restored(self, *, water=25.6, band="F1", window=GRID_DAY, day=17):
+        """The Memory a restart at 15:00 comes back with.
+
+        15:00 is inside the 10-18 solar window and outside the 23-07 night one;
+        17/9/2026 is a Thursday, so F1.
+        """
+        from custom_components.villa_pool.supervisor import restore_memory
+
+        now = at(2026, 9, day, 15, 0)
+        return now, restore_memory(
+            mono=now, pdc_running=True, pump_running=True, water_temp=water,
+            min_temp=DEFAULT_MIN_TEMP, band=band, grid_heating=True,
+            grid_window=window, solar_ok=False,
+        )
+
+    def test_the_run_is_adopted(self):
+        _, mem = self.restored()
+        assert mem.pdc_state == PDC_GRID
+
+    def test_the_next_tick_continues_it_rather_than_starting_it(self):
+        """The discriminator: `pdc_since` survives, so this is one run and not
+        two. A fresh entry would re-stamp it and bracket a new session."""
+        now, mem = self.restored()
+        st = state(now, water_temp=25.6, headroom_w=0.0, band="F1")
+        dec, mem2 = run(st, mem)
+        assert dec.pdc_state == PDC_GRID
+        assert mem2.pdc_since == mem.pdc_since
+        assert "heating on grid" in dec.reason      # holding, not entering
+
+    def test_with_no_authorising_window_the_run_is_left_alone(self):
+        """What `grid_window()` answers at 15:00 with the top-up switch off —
+        and a run nothing recognises is still not adopted."""
+        _, mem = self.restored(window=None)
+        assert mem.pdc_state == PDC_OFF
+
+    def test_f2_is_not_adopted_either(self):
+        """The band veto applies to BOTH windows (§3, §5.4: the F2 veto is
+        untouched). Saturday 15:00 is F2 and inside the solar window, so the
+        machine would be running on something the law refuses this very tick —
+        adopting it would make the supervisor stop a run it never began."""
+        _, mem = self.restored(band=BAND_F2, day=19)      # Saturday
+        assert mem.pdc_state == PDC_OFF
+
+    def test_hot_enough_still_wins(self):
+        """Whatever the relay says, a pool above min+0.5 has no run to adopt."""
+        _, mem = self.restored(water=27.6)
+        assert mem.pdc_state == PDC_OFF
+
+    def test_the_night_window_still_restores_as_it_did(self):
+        """The change is additive: 01:00 in F3 is unchanged (§7.10)."""
+        from custom_components.villa_pool.supervisor import restore_memory
+
+        now = at(2026, 9, 17, 1, 0)
+        mem = restore_memory(
+            mono=now, pdc_running=True, pump_running=True, water_temp=26.0,
+            min_temp=DEFAULT_MIN_TEMP, band=BAND_F3, grid_heating=True,
+            grid_window=GRID_NIGHT, solar_ok=False,
+        )
+        assert mem.pdc_state == PDC_GRID

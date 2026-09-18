@@ -70,6 +70,7 @@ from .supervisor import (
     SessionResult,
     Windows,
     decide,
+    grid_window,
     in_window,
     restore_memory,
     session_step,
@@ -275,6 +276,13 @@ class SupervisorEngine:
             state = self._build_state(now, dt_util.utcnow())
             if not self._restored:
                 self.memory = self._restore(state)
+                # A run we ADOPTED was already going before we booted, so the
+                # first tick is not a false->true edge. `session.py` refuses to
+                # bracket a run whose start reading nobody took (§5.4) — and
+                # this is what tells it, since `_pdc_was_running` starts False.
+                self._pdc_was_running = self.memory.pdc_state in (
+                    PDC_SOLAR, PDC_GRID
+                )
                 self._restored = True
             decision, self.memory = decide(state, self.memory)
             self.decision = decision
@@ -353,7 +361,6 @@ class SupervisorEngine:
     def _restore(self, state: PoolState) -> Memory:
         """Re-derive the latches on the first tick after a (re)start (§7.10)."""
         data = self.coordinator.data or {}
-        w = state.config.windows
         return restore_memory(
             mono=state.mono,
             pdc_running=data.get("pdc_running"),
@@ -362,7 +369,9 @@ class SupervisorEngine:
             min_temp=state.config.min_temp,
             band=state.band,
             grid_heating=state.grid_heating,
-            in_grid_window=in_window(state.now, w.pdc_grid_start, w.pdc_grid_end),
+            # Both windows, via the one function that knows there are two:
+            # a daytime top-up (§5.4) is a run to adopt, not to re-start.
+            grid_window=grid_window(state),
             solar_ok=False,
             outdoor_temp=state.outdoor_temp,
             antifreeze_off_c=state.config.antifreeze_off_c,

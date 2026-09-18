@@ -42,6 +42,78 @@ discovering it during a reinstall.
 
 ---
 
+## v0.6.0 — a restart mid daytime top-up (2026-09-18)
+
+One defect, found by reading v0.5.0's diff back, plus a second one that the fix
+for the first uncovered.
+
+**`restore_memory` only knew the NIGHT grid window.** `engine._restore` handed
+it `in_window(now, pdc_grid_start, pdc_grid_end)` — 23:00-07:00 — so a restart
+at 15:00 during a §5.4 daytime top-up fell through to "nothing we recognise
+authorises this" and re-derived `PDC_OFF` while the machine was genuinely
+heating. The next tick entered GRID again as a *fresh* run. It pre-dates v0.5.0's
+tag in the sense that it shipped with it, and it bites every daytime top-up, F1
+weekdays included.
+
+**What it actually cost**, since it is easy to over-state: nothing at the
+compressor. The actuator is idempotent and the PdC was already on `heat` at the
+same setpoint, so no command was sent and no cycle was added. What it cost was a
+reset `pdc_since` and a session bracket that never happened.
+
+**The fix is a shape change, not a second window check.** `restore_memory` now
+takes `grid_window: str | None` — `pdc.grid_window()`'s own answer — instead of
+`in_grid_window: bool`. That function is the one place that knows there are two
+windows, so handing it the answer is what keeps them from drifting apart again.
+The band veto still applies to BOTH windows, exactly as `grid_conditions` does.
+
+**273 tests.**
+
+### The band veto is NOT exempt for the daytime window
+
+Worth writing down because it was assumed the other way when this was reported.
+STORY §5.4 ("the F2 veto is untouched"), §3 ("F2: never") and `grid_conditions`
+all agree: the veto is uniform. Exempting the daytime window in `restore_memory`
+would have adopted GRID on Saturday at 15:00 (F2 07:00-23:00, inside the solar
+window) — and the very next tick's `grid_conditions(running=True)` would have
+refused it and called `_stop`, so the supervisor would have **stopped a run it
+never began** and stamped a MIN_OFF the compressor had not earned. Pinned by
+`TestRestartDuringADaytimeTopUp::test_f2_is_not_adopted_either`.
+
+### Pre-tag adversarial review — one more real defect
+
+1. **A restart that adopts a run brackets a session for it.** `session.py` says
+   in its own docstring that "a run already in progress at startup is NOT
+   adopted", and enforces it through `was_running` — which `engine.__init__`
+   seeds `False` unconditionally. So the first tick after a restart that adopts
+   a run reads as a false->true edge, opens a bracket at the restart instant,
+   and on the night path publishes it as `clean`: a COP point measuring only the
+   tail of a run. **This is a v0.5.0 defect on the night path already**, not
+   something this release introduced — but the fix above would have extended it
+   to every daytime top-up, which is how it surfaced. `_pdc_was_running` is now
+   seeded from the restored memory. Pinned by
+   `test_a_restart_mid_run_does_not_bracket_a_session`.
+
+Also checked, and clean: the night path restores exactly as it did (`grid_window`
+returns `night` wherever the old bool was True); `_restore` reads
+`grid_day_topup` through the same settings path `grid_heating` and `min_temp`
+already used, and the engine is started after the platforms, so the switch has
+restored by then; `session.py`'s `in_night_window` still uses the night window
+alone, which is what `all_night` means; nothing else re-derives a window.
+
+**The pure tests could not have caught this one.** The bug was in `engine.py`'s
+call, and every `supervisor/` test passed throughout. The test that fails
+against the old wiring is `test_restart_mid_daytime_topup_resumes_it`, and it
+has to assert on the *reason* — `sensor.pool_pdc_state` said GRID either way,
+because the next tick started a new run. "heating on grid" (holding) vs "water
+below minimum" (entering) is the whole difference.
+
+### Still to do for this release
+
+Nothing HA-side. No new entity, no dashboard card, no automation to retire — it
+is a restart-path fix. Upgrade and restart.
+
+---
+
 ## v0.5.0 — daytime grid top-up + the heating-session log (2026-09-17)
 
 Two things the owner asked for on the same breath, and they turned out to

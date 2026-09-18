@@ -31,6 +31,7 @@ from custom_components.villa_pool.const import (
     PDC_SOLAR,
 )
 from custom_components.villa_pool.supervisor import (
+    GRID_NIGHT,
     Memory,
     chlorine_decision,
     cop_estimate,
@@ -594,7 +595,7 @@ class TestAntifreezeSurvivesARestart:
         return restore_memory(
             mono=now, pdc_running=False, pump_running=True, water_temp=8.0,
             min_temp=DEFAULT_MIN_TEMP, band=BAND_F3, grid_heating=True,
-            in_grid_window=True, solar_ok=False,
+            grid_window=GRID_NIGHT, solar_ok=False,
             outdoor_temp=outdoor, antifreeze_off_c=DEFAULT_ANTIFREEZE_OFF_C,
         )
 

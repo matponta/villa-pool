@@ -119,6 +119,13 @@ The band veto is untouched and is what makes this safe: Saturday is F2 from
 07:00 to 23:00, so the solar window sits inside the expensive band all day and
 the top-up cannot become a way in.
 
+**A restart mid top-up adopts the run** (v0.6.0). `restore_memory` is handed
+`grid_window()`'s answer rather than a bare "are we in the night window" bool,
+so the two windows cannot drift apart: the function that knows there are two is
+the only one that decides. The band veto applies to both, exactly as
+`grid_conditions` does — adopting a run the next tick would refuse is worse than
+not adopting it, because the supervisor would then *stop* a run it never began.
+
 **It roughly doubles the daily spend.** Measured by replaying a September day:
 the marginal cost is 24 % lower by day (0.0501 vs 0.0659 €/kWh_th) and it costs
 one extra compressor start, but the pool now *reaches and holds* the minimum
@@ -151,7 +158,10 @@ Two rules keep it honest, and both matter more than completeness:
 It brackets on the SUPERVISOR's state, not `pool_pdc_acceso`: the machine's own
 flag is cloud-polled and flickers, and a flicker would chop one run into several.
 A run already going at startup is not adopted — its start reading was never
-taken.
+taken. That rule is enforced by `was_running`, which the engine seeds from the
+*restored* memory (v0.6.0): seeded blindly False, a restart that adopts a run
+reads as a false->true edge and brackets the tail of it, then publishes it as
+`clean` because it is a night run.
 
 ### The PdC is the lever that can be damaged by being asked twice
 
@@ -303,7 +313,9 @@ the same situation restarting the machine when the anchor is dropped.
   overwritten. (The v0.1.0 dry-run tests were weaker than they looked for
   exactly this reason.)
 - **On restart, re-derive the PdC state** from `pool_pdc_acceso` + water temp;
-  do not assume OFF. `restore_memory` also adopts a pump that is already in
+  do not assume OFF — and against BOTH grid windows (`grid_window()`), or a
+  restart during a §5.4 daytime top-up re-derives OFF while the machine is
+  genuinely heating. `restore_memory` also adopts a pump that is already in
   marcia — the 60 s debounce filters a *fresh transition*, and is not a reason
   to re-prove a steady state that predates the restart. Without that, every
   restart would write `off` → `heat` and put a spurious cycle on the compressor.
@@ -412,8 +424,8 @@ future re-deploy.
   alert. Until then every cover rule is inert by construction.
 - Check `automation.pool_test_cop_notturno` is disabled before any actuating
   release — the integration must not fight a running one-shot (§6).
-- **§5.4's daytime GRID top-up is still PROPOSED** and unimplemented;
-  `switch.pool_grid_day_topup` does not exist. Owner to confirm.
+- ~~**§5.4's daytime GRID top-up is still PROPOSED**~~ — confirmed by the owner
+  and shipped in v0.5.0; `switch.pool_grid_day_topup` exists and defaults ON.
 - **§9's "flow at 30 %" is now load-bearing.** `binary_sensor.pool_pompa_in_marcia`
   needs flow >= `input_number.pool_portata_minima` (1 m3/h). If the pump at
   `antifreeze_speed` does not reach that, the sensor reads OFF while the pump is

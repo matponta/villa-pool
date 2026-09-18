@@ -32,6 +32,8 @@ from .cop import band_price, cop_estimate, solar_share, thermal_cost
 from .law import decide, restore_memory
 from .model import Decision, Memory, PoolConfig, PoolState, Windows
 from .pdc import (
+    GRID_DAY,
+    GRID_NIGHT,
     blocking_reason,
     grid_conditions,
     grid_window,
@@ -52,6 +54,8 @@ from .windows import in_slot, in_window, since_start, window_length
 __all__ = [
     "BLIND",
     "Decision",
+    "GRID_DAY",
+    "GRID_NIGHT",
     "HOLD",
     "LATCHED",
     "Lever",

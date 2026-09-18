@@ -306,7 +306,7 @@ def restore_memory(
     min_temp: float,
     band: str | None,
     grid_heating: bool,
-    in_grid_window: bool,
+    grid_window: str | None,
     solar_ok: bool,
     pump_running: bool | None = None,
     outdoor_temp: float | None = None,
@@ -332,6 +332,19 @@ def restore_memory(
     restart reads as "pump not in marcia", which would block the PdC and write
     `off` -> `heat`: precisely the spurious extra start §7.10 forbids.
 
+    **Which window authorises a grid run is `pdc.grid_window()`'s answer**,
+    handed in rather than re-derived here — that function is the one place that
+    knows there are two. A restore that only knew the night one re-derived OFF
+    during a §5.4 daytime top-up while the machine was genuinely heating, and
+    the next tick entered GRID again as a *fresh* run: harmless at the relay
+    (the actuator is idempotent and the machine is already on `heat` at the same
+    setpoint) but it reset `pdc_since` and opened a spurious session bracket.
+
+    The band veto below applies to BOTH windows, exactly as `grid_conditions`
+    does — §3 and §5.4 are explicit that the daytime top-up leaves the F2 veto
+    untouched. Adopting a run the very next tick would refuse is worse than not
+    adopting it at all: the supervisor would then *stop* a run it never began.
+
     **Antifreeze is re-derived against the RELEASE threshold**, not the engage
     one. The latch is history we cannot recover: at +1 °C, inside the 0..+2
     band, a restart cannot tell whether antifreeze was running. Re-deriving
@@ -350,7 +363,11 @@ def restore_memory(
         pdc_state = PDC_OFF
     elif solar_ok:
         pdc_state = PDC_SOLAR
-    elif in_grid_window and grid_heating and band not in GRID_FORBIDDEN_BANDS:
+    elif (
+        grid_window is not None
+        and grid_heating
+        and band not in GRID_FORBIDDEN_BANDS
+    ):
         pdc_state = PDC_GRID
     else:
         # Running, but nothing we recognise authorises it — most likely the
