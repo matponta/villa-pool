@@ -69,6 +69,30 @@ and stamps a MIN_OFF the compressor has not earned.
 
 **278 tests.**
 
+### Deployed and verified live — 2026-09-18 11:15
+
+HACS v0.5.0 -> **v0.7.0**. The live system had never had v0.6.0: it was tagged
+but never published as a GitHub *release*, and HACS follows releases — so
+`available_version` sat at v0.5.0 until `update_information` was forced. v0.7.0
+is published as a release and carries both.
+
+Restart at 11:13; the integration came back `loaded` on the **same config entry**
+`01M2QBJM448GYF8R0R7K7VNSZ0`, so every live `*_poolbrain_*` id is unchanged and
+no dashboard card broke. (A re-add would have produced the §4 ids and broken all
+of them — see LIVE STATUS.)
+
+At 11:15 the supervisor reports `writes: 0`, `latched: []`, `holding: []`,
+`frozen: true`. The pool was in `manual` — the owner started the PdC by hand at
+08:50 — so rung 1 froze every lever across the upgrade, which is exactly what §4
+asks for. The log carries the expected "dry_run is OFF — now WRITING" line at
+11:15:09 and nothing else; no traceback.
+
+**The fix itself is NOT yet exercised live.** Adoption can only happen on a
+restart while the law would authorise a grid run, and in `manual` the PdC is
+BLOCKED. The first real test is a restart during a daytime top-up in `auto`, and
+what to look for on the first tick after it is `heating on grid — daytime
+top-up` (holding) rather than `water below minimum` (entering).
+
 ### The near-miss, and why the shape of the fix changed
 
 This was first written the obvious way: pass `grid_window()`'s answer instead of
