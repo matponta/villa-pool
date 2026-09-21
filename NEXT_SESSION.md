@@ -107,23 +107,40 @@ Settling that day: pump on 20:41:16, in marcia 20:41:26, still stagnant at
 with margin, counted against `pump_running_since` so it INCLUDES the 60 s pump
 confirmation.
 
-### LIVE VERIFY: not done — not deployed at the time of writing
+### LIVE VERIFY — done, 2026-09-21 22:32-22:36, all four checks pass
 
-This section exists to hold the verification result and does not have one yet.
-When it is installed, the checks worth making are:
+Updated via HACS, restarted, options flow re-opened and submitted. Entities
+registered **22:32:09**.
 
-1. `switch.pool_poolbrain_orp_control` exists and is **OFF**. If it is on after
-   an upgrade, something restored a state that was never set.
-2. **Open the options flow and submit it.** A HACS upgrade does not re-run the
-   config flow, so the three new pickers (`water_ph_sensor`, `water_orp_sensor`,
-   `water_ec_sensor`) are absent from the existing config entry and the
-   defaults never land. Until then the readings are `None`, never fresh, and
-   the trim is always 0.0 — safe, but doing nothing.
-3. `binary_sensor.pool_poolbrain_water_reading_fresh` goes ON about 3 minutes
-   into a pump run and OFF when it stops.
-4. `sensor.pool_poolbrain_supervisor_reason` is UNCHANGED from v0.7.0 while the
-   switch is off. If an `[ORP …]` fragment appears with the switch off, the
-   gating is wrong.
+1. **`switch.pool_poolbrain_orp_control` exists and is OFF.** ✓
+2. **The options flow landed the pickers.** ✓ —
+   `binary_sensor.pool_poolbrain_water_reading_fresh` reads pH **6.9**, ORP
+   **611 mV**, EC **8.879 mS/cm**, so all three new pickers are wired. (EC
+   against the 8.906 measured during the flush test three hours earlier: the
+   circulating value reproduces.)
+3. **The freshness gate flips.** ✓ — pump in marcia since 22:31:02, sensor ON
+   at **22:36:08**. See the timing note below; it is longer than 180 s and
+   that is expected.
+4. **The reason line is unchanged from v0.7.0.** ✓ — and this is the check
+   that mattered most, because it was taken while the reading was **fresh**:
+
+   > `pump ON 80% (chlorine+catchup); PdC off — PdC unavailable — holding, no
+   > write; chlorine ON — catch-up, 0.2 h to target`
+
+   No `[ORP …]` fragment, `orp_trim_h: 0`, `orp_reason: "ORP control off"`,
+   `water_fresh: true`. The gate is on the SWITCH, not merely on staleness —
+   a fresh reading with the switch off still changes nothing.
+
+Settings came up at their shipped defaults: target 700 mV, max extra 2.0 h,
+pH ceiling 7.7.
+
+**The timing note: 5m06s, not 3 minutes, and that is the documented restart
+pessimism.** The pump had been in marcia since 22:31:02, but `restore_memory`
+stamps `pump_running_since` exactly `PUMP_CONFIRM_S` (60 s) before the first
+tick — it deliberately does not adopt the flush, only the pump confirmation.
+So the supervisor counted from ~22:32:08, not 22:31:02, and the 180 s window
+closed at ~22:35, landing on the 22:36:08 tick. First observation of that
+behaviour in the wild; it matches what CLAUDE.md predicts and costs nothing.
 
 ### Still open before the switch may be turned on
 
