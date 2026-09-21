@@ -29,7 +29,10 @@ from .const import (
     DEFAULT_COVER_CHLORINE_FACTOR,
     DEFAULT_FILTRATION_SPEED,
     DEFAULT_MIN_TEMP,
+    DEFAULT_ORP_MAX_EXTRA_HOURS,
+    DEFAULT_ORP_TARGET_MV,
     DEFAULT_PDC_SPEED,
+    DEFAULT_PH_CEILING,
     DEFAULT_PRICE_F1,
     DEFAULT_PRICE_F2,
     DEFAULT_PRICE_F3,
@@ -105,6 +108,23 @@ SETTINGS: tuple[Setting, ...] = (
     Setting("antifreeze_speed", "Antifreeze speed", DEFAULT_ANTIFREEZE_SPEED,
             ANTIFREEZE_SPEED_MIN, ANTIFREEZE_SPEED_MAX, PUMP_SPEED_STEP, "%",
             "mdi:snowflake"),
+    # --- water chemistry (§5.3, §9) ------------------------------------------
+    # The target is owner-settable rather than a textbook number on purpose:
+    # cyanuric acid suppresses ORP for a given FAC and accumulates from the
+    # slow tablets, and the probe carries its own offset (-102 mV against the
+    # owner's reference on 2026-09-21). Setting it from THIS pool's readings
+    # absorbs both.
+    Setting("orp_target", "Orp target", DEFAULT_ORP_TARGET_MV,
+            400, 900, 5, "mV", "mdi:flash-triangle-outline"),
+    # Extension only -- there is deliberately no matching "max cut". A cut
+    # oscillates against its own input; see `supervisor/water.orp_trim`.
+    Setting("orp_max_extra_hours", "Orp max extra hours",
+            DEFAULT_ORP_MAX_EXTRA_HOURS, 0, 6, 0.5, "h", "mdi:plus-thick"),
+    # Above this the ORP extension is suspended and the reason line asks for
+    # acid: at high pH the chlorine is made but mostly inactive, so more cell
+    # hours is the wrong answer to a low ORP.
+    Setting("ph_ceiling", "Ph ceiling", DEFAULT_PH_CEILING,
+            7.0, 8.5, 0.1, None, "mdi:ph"),
     # --- tariff (diagnostic only — feeds the cost estimate, not the law) ----
     Setting("price_f1", "Price F1", DEFAULT_PRICE_F1, 0, 2, 0.001,
             "EUR/kWh", "mdi:currency-eur"),

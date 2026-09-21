@@ -42,6 +42,111 @@ discovering it during a reinstall.
 
 ---
 
+## v0.8.0 — the ORP/pH chlorine trim (2026-09-21)
+
+A YINMIK WF-3188 water tester, tuya-local, sitting in the skimmer. It arrived
+mid-session and this release wires it into §5.3 — half of the §9 item that has
+said "chlorine target is a proxy in hours" since the beginning.
+
+**It ships inert.** `switch.pool_orp_control` defaults OFF. With it off, with
+no probe configured, or with a stale reading, `decide()` is the v0.7.0 hours
+law. `tests/test_water.py::TestDegradesToTheHoursLaw` is this release's
+`test_dry_run_calls_nothing`, and the 268 pre-existing tests passed unchanged
+at every step of the build.
+
+### What the pre-tag adversarial review found: a limit cycle
+
+Not "nothing" this time. **The negative trim oscillated.** 20:30 — pump window
+shut (08-20), chlorine window open (09-21), past the 19:00 deadline — with
+5.6 h done against a 6.0 h target and ORP above target:
+
+> fresh reading → cut → target 5.5 → met → chlorine off → **pump off** →
+> reading goes stale → trim 0 → target back to 6.0 → 0.4 h missing → catch-up
+> demands the pump → **pump on** → 3 min later fresh → cut returns.
+
+Simulated: a **5-minute pump cycle, 12 starts an hour**. The trim's input
+depends on the thing the trim controls — the same circularity that already
+forces the chlorine *demand* to be computed before the pump is sized.
+
+v0.8.0 is therefore **extension only**: the trim can add hours, never remove
+them. That direction is provably stable — raising the target keeps the pump
+running, which keeps the reading fresh, which keeps the trim; going stale falls
+back to the hours law, which settles to "off" and stays. The cut was removed
+rather than defaulted to zero, because a setting that arms a trap is worse than
+no setting. A safe cut needs a "chlorine done for today" latch in `Memory` with
+a midnight reset and restart derivation — a separate step.
+
+**A second finding, about the test rather than the code.** The first attempt at
+the regression test *passed with the bug reintroduced*: the patch that was
+supposed to restore the cut changed the clamp, but a later branch returned a
+hardcoded `0.0` and swallowed it. Patched properly, 3 of the 4 stability tests
+fail. Worth remembering as a class: **a regression test is not done until it
+has been watched to fail.**
+
+### The measurement that motivated the whole thing
+
+2026-09-21, the owner's own reference tool against the supervisor's state:
+
+| | reference | tester, flushed |
+|---|---|---|
+| EC | 8610 µS/cm | 8.906 mS/cm (+3.4 %) |
+| Salt | 4270 ppm | ~4453 ppm |
+| pH | 7.2 | 6.82 |
+| ORP | 721 mV | 619 mV (−102) |
+| FAC | 1.2 ppm | — |
+
+The cell had run **6.69 h against a 6.0 h target** — `chlorine_hours_missing`
+0, the day "done" — while the water measured FAC 1.2 ppm, under §9's 1.5-2.
+The hours proxy said done; the water said short. `TestTheGapSection9Recorded`
+replays exactly that.
+
+**The skimmer lies.** Stagnant the tester read EC 7.01 mS/cm against 8.906
+flushed — 21 % low — and the reference independently put the pool at 8.61.
+Settling that day: pump on 20:41:16, in marcia 20:41:26, still stagnant at
+20:41:39, plateau 20:43:00, flat for 14 min. `WATER_FLUSH_S` = 180 s is that
+with margin, counted against `pump_running_since` so it INCLUDES the 60 s pump
+confirmation.
+
+### LIVE VERIFY: not done — not deployed at the time of writing
+
+This section exists to hold the verification result and does not have one yet.
+When it is installed, the checks worth making are:
+
+1. `switch.pool_poolbrain_orp_control` exists and is **OFF**. If it is on after
+   an upgrade, something restored a state that was never set.
+2. **Open the options flow and submit it.** A HACS upgrade does not re-run the
+   config flow, so the three new pickers (`water_ph_sensor`, `water_orp_sensor`,
+   `water_ec_sensor`) are absent from the existing config entry and the
+   defaults never land. Until then the readings are `None`, never fresh, and
+   the trim is always 0.0 — safe, but doing nothing.
+3. `binary_sensor.pool_poolbrain_water_reading_fresh` goes ON about 3 minutes
+   into a pump run and OFF when it stops.
+4. `sensor.pool_poolbrain_supervisor_reason` is UNCHANGED from v0.7.0 while the
+   switch is off. If an `[ORP …]` fragment appears with the switch off, the
+   gating is wrong.
+
+### Still open before the switch may be turned on
+
+**Whether the probe deserves it.** EC agreed with the reference to 3.4 % and is
+trustworthy today. pH and ORP are not: pH was 0.38 low, ORP 102 mV low, and
+**neither had settled after 16 minutes of flow** while EC plateaued in 90 s —
+the difference between a conductivity cell and two potentiometric electrodes.
+The reference tool's own mV series is erratic (−16, −351, −320 across the year,
+−320 on 17/9), so the 102 mV wants a second reading before anyone acts on it.
+
+The test that decides it: leave the pump running through a full filtration
+window and see whether pH and ORP reach a plateau at all. Plateau and hold →
+set `number.pool_poolbrain_orp_target` from this pool's own flushed readings
+(which absorbs both the probe offset and the CYA level) and turn the switch on.
+Wander all day → leave it off; the tester stays a salinity instrument.
+
+The probe is calibratable (buffer sachets, on-device). **Check
+`select.pool_tester_ph_buffer` matches the sachets before calibrating**: it is
+set to `EU` (4.01/7.00/10.01) and these devices often ship Chinese-standard
+solutions (4.00/6.86/9.18), which would bake in a +0.14 error.
+
+---
+
 ## v0.7.0 — a restart mid daytime top-up (2026-09-18)
 
 One defect, one more found reviewing the fix for it, and a near-miss with the

@@ -48,6 +48,7 @@ from .pump import (
 )
 from .session import Session, SessionResult, session_step, thermal_kwh
 from .solar import raw_headroom_ok, solar_lost_for, solar_step
+from .water import OrpTrim, WaterQuality, flushed_for_s, orp_trim, read_quality
 from .windows import in_slot, in_window, since_start, window_length
 
 __all__ = [
@@ -57,6 +58,7 @@ __all__ = [
     "LATCHED",
     "Lever",
     "Memory",
+    "OrpTrim",
     "Plan",
     "PoolConfig",
     "PoolState",
@@ -64,6 +66,7 @@ __all__ = [
     "Session",
     "SessionResult",
     "WRITE",
+    "WaterQuality",
     "Windows",
     "antifreeze_step",
     "band_price",
@@ -74,6 +77,7 @@ __all__ = [
     "cop_estimate",
     "cover_cutoff",
     "decide",
+    "flushed_for_s",
     "grid_conditions",
     "grid_window",
     "hours_missing",
@@ -81,11 +85,13 @@ __all__ = [
     "in_slot",
     "in_window",
     "is_confirmed",
+    "orp_trim",
     "pdc_step",
     "plan",
     "postrun_active",
     "pump_plan",
     "raw_headroom_ok",
+    "read_quality",
     "restore_memory",
     "same",
     "session_step",

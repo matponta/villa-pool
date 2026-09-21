@@ -22,6 +22,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from datetime import datetime, time
 
+from ..const import (
+    DEFAULT_ORP_MAX_EXTRA_HOURS,
+    DEFAULT_ORP_TARGET_MV,
+    DEFAULT_PH_CEILING,
+)
+
 
 @dataclass(frozen=True)
 class Windows:
@@ -66,6 +72,12 @@ class PoolConfig:
     cover_chlorine_factor: float
     winter_hours: float
     windows: Windows
+    # --- water chemistry (§5.3, §9) ------------------------------------------
+    # Defaulted, so every PoolConfig built before v0.8.0 -- and every test that
+    # builds one -- keeps working and keeps the v0.6.0 law unchanged.
+    orp_target: float = DEFAULT_ORP_TARGET_MV
+    orp_max_extra_hours: float = DEFAULT_ORP_MAX_EXTRA_HOURS
+    ph_ceiling: float = DEFAULT_PH_CEILING
 
 
 @dataclass(frozen=True)
@@ -131,7 +143,20 @@ class PoolState:
     # same thermal kWh costs 30-45 % less than at night — and F1 ~ F3 in price.
     grid_day_topup: bool = True
     chlorine_target_control: bool = True
+    # §5.3 / §9: let a fresh ORP reading trim the chlorine-hours target.
+    # Default False -- this ships inert, like `dry_run` did, and is turned on
+    # deliberately once the probe has earned it.
+    orp_control: bool = False
     volume_today_m3: float = 0.0
+
+    # --- water chemistry (YINMIK WF-3188, in the skimmer) --------------------
+    # None = not configured, or unreadable this tick. These are RAW probe
+    # values and mean nothing on their own: `water.read_quality` is the only
+    # place that decides whether the pump has flushed the skimmer long enough
+    # for them to be the pool's chemistry rather than the pocket's.
+    water_ph: float | None = None
+    water_orp: float | None = None
+    water_ec: float | None = None
 
     @property
     def mono(self) -> datetime:

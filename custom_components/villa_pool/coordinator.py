@@ -42,6 +42,9 @@ from .const import (
     CONF_PUMP_RUNNING,
     CONF_SOLAR_HEADROOM,
     CONF_TARIFF_BAND,
+    CONF_WATER_EC,
+    CONF_WATER_ORP,
+    CONF_WATER_PH,
     CONF_WATER_TEMP,
     CONF_WORKDAY,
     UPDATE_INTERVAL,
@@ -166,6 +169,12 @@ class VillaPoolCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "chlorine_switch": self.onoff(CONF_CHLORINATOR_SWITCH),
             "chlorine_running": self.onoff(CONF_CHLORINATOR_RUNNING),
             "chlorine_hours_today": self.num(CONF_CHLORINATOR_HOURS) or 0.0,
+            # water chemistry (YINMIK WF-3188 in the skimmer). Raw probe
+            # values: whether they mean anything is `water.read_quality`'s
+            # question, not the coordinator's. None when not configured.
+            "water_ph": self.num(CONF_WATER_PH),
+            "water_orp": self.num(CONF_WATER_ORP),
+            "water_ec": self.num(CONF_WATER_EC),
             # environment + energy
             "water_temp": self.num(CONF_WATER_TEMP),
             "outdoor_temp": self.num(CONF_OUTDOOR_TEMP),

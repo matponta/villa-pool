@@ -57,6 +57,9 @@ from .const import (
     CONF_PUMP_SWITCH,
     CONF_SOLAR_HEADROOM,
     CONF_TARIFF_BAND,
+    CONF_WATER_EC,
+    CONF_WATER_ORP,
+    CONF_WATER_PH,
     CONF_WATER_TEMP,
     CONF_WORKDAY,
     DEFAULT_CHLORINATOR_HOURS,
@@ -84,6 +87,9 @@ from .const import (
     DEFAULT_PUMP_SWITCH,
     DEFAULT_SOLAR_HEADROOM,
     DEFAULT_TARIFF_BAND,
+    DEFAULT_WATER_EC,
+    DEFAULT_WATER_ORP,
+    DEFAULT_WATER_PH,
     DEFAULT_WATER_TEMP,
     DEFAULT_WORKDAY,
     DOMAIN,
@@ -117,6 +123,12 @@ PICKERS: tuple[tuple[str, str, list[str] | None], ...] = (
     # --- environment + energy ------------------------------------------------
     (CONF_WATER_TEMP, DEFAULT_WATER_TEMP, ["sensor"]),
     (CONF_OUTDOOR_TEMP, DEFAULT_OUTDOOR_TEMP, ["sensor"]),
+    # --- water chemistry (YINMIK WF-3188, added 2026-09-21) -----------------
+    # Optional like everything else: left empty the reading is never fresh,
+    # the ORP trim is always 0.0 and §5.3 is the v0.6.0 hours law.
+    (CONF_WATER_PH, DEFAULT_WATER_PH, ["sensor"]),
+    (CONF_WATER_ORP, DEFAULT_WATER_ORP, ["sensor"]),
+    (CONF_WATER_EC, DEFAULT_WATER_EC, ["sensor"]),
     (CONF_SOLAR_HEADROOM, DEFAULT_SOLAR_HEADROOM, ["sensor"]),
     (CONF_GRID_POWER, DEFAULT_GRID_POWER, ["sensor"]),
     (CONF_TARIFF_BAND, DEFAULT_TARIFF_BAND, None),

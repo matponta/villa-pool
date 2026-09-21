@@ -61,6 +61,16 @@ FLAGS: tuple[Flag, ...] = (
         "OFF: the chlorinator follows its window only and ignores the daily "
         "hours target (escape hatch).",
     ),
+    Flag(
+        "orp_control", "Orp control", False, "mdi:flash-triangle-outline",
+        "ON: a FRESH ORP reading can EXTEND the daily chlorine-hours target, "
+        "by up to `orp_max_extra_hours` (STORY §9). It can only ever add "
+        "hours, never remove them. "
+        "It never switches the cell and never overrides an interlock, and a "
+        "stale or missing reading trims nothing — so with this OFF, or with "
+        "no probe, §5.3 is exactly the v0.6.0 hours law. Default OFF: this "
+        "ships inert and is turned on once the probe has earned it.",
+    ),
 )
 
 

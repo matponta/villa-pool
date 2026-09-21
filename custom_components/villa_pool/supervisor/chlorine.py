@@ -12,9 +12,12 @@ Two hard rules that outrank the owner's own `pool_in_use`:
   chlorine, and making it anyway is how you end up over-chlorinated under a
   closed cover.
 
-The target is a proxy: hours, not grams. The real target is FAC 1.5-2 ppm, and
-when the ORP probe / Modbus bridge to the UNIKO lands this switches to estimated
-grams (STORY §9).
+The target is a proxy: hours, not grams. The real target is FAC 1.5-2 ppm
+(STORY §9). From v0.8.0 an ORP probe can *trim* that proxy — `orp_trim_h`,
+computed in `water.py` and clamped there — but it never replaces it and never
+switches the cell. `orp_trim_h` defaults to 0.0 through every function here, so
+with no probe, a stale reading or the switch off, this module behaves exactly
+as it did in v0.6.0.
 """
 from __future__ import annotations
 
@@ -41,11 +44,18 @@ def cover_cutoff(state: PoolState) -> bool:
     return hours is not None and hours > COVER_CLOSED_CHLORINE_CUTOFF_H
 
 
-def target_hours(state: PoolState) -> float:
+def target_hours(state: PoolState, orp_trim_h: float = 0.0) -> float:
     """Today's effective chlorine-hours target.
 
     Halved (by `cover_chlorine_factor`) while the cover is closed: less UV
     burn-off under the cover means less production is needed.
+
+    `orp_trim_h` is the §9 chemistry correction, already clamped by
+    `water.orp_trim`. It is applied AFTER the cover factor, not before —
+    the cover scales how much the pool *loses*, while the trim answers what the
+    water actually measured, and scaling a measurement by the cover factor
+    would be double-counting. Winter ignores it entirely: that is a fixed
+    maintenance dose in a closed pool, not a target to chase.
     """
     cfg = state.config
     if state.mode == MODE_WINTER:
@@ -53,15 +63,15 @@ def target_hours(state: PoolState) -> float:
     target = cfg.target_chlorine_hours
     if state.cover_closed:
         target *= cfg.cover_chlorine_factor
-    return target
+    return max(0.0, target + orp_trim_h)
 
 
-def hours_missing(state: PoolState) -> float:
+def hours_missing(state: PoolState, orp_trim_h: float = 0.0) -> float:
     """Hours still owed against today's target (never negative)."""
-    return max(0.0, target_hours(state) - state.chlorine_hours_today)
+    return max(0.0, target_hours(state, orp_trim_h) - state.chlorine_hours_today)
 
 
-def catchup_active(state: PoolState) -> bool:
+def catchup_active(state: PoolState, orp_trim_h: float = 0.0) -> bool:
     """Past the deadline with hours still owed (STORY §5.3).
 
     Runs "until target or midnight": after midnight the daily counter has reset
@@ -69,7 +79,10 @@ def catchup_active(state: PoolState) -> bool:
     """
     if not state.chlorine_target_control:
         return False
-    return state.now.time() >= state.config.windows.deadline and hours_missing(state) > 0
+    return (
+        state.now.time() >= state.config.windows.deadline
+        and hours_missing(state, orp_trim_h) > 0
+    )
 
 
 def chlorine_decision(
@@ -79,6 +92,7 @@ def chlorine_decision(
     pump_speed: int | None,
     pdc_state: str,
     antifreeze: bool,
+    orp_trim_h: float = 0.0,
 ) -> tuple[bool, str]:
     """Should the chlorinator be enabled? Returns (enabled, reason)."""
     cfg = state.config
@@ -120,7 +134,7 @@ def chlorine_decision(
             return True, "chlorine window (target control off)"
         return False, "outside chlorine window (target control off)"
 
-    missing = hours_missing(state)
+    missing = hours_missing(state, orp_trim_h)
 
     # The owner is in the water: produce, unless an interlock above said no.
     if state.pool_in_use:
@@ -137,7 +151,7 @@ def chlorine_decision(
     if pdc_state == PDC_SOLAR:
         return True, "free hours while PdC on solar"
 
-    if catchup_active(state):
+    if catchup_active(state, orp_trim_h):
         return True, f"catch-up, {missing:.1f} h to target"
 
     return False, "outside chlorine window"

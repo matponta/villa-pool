@@ -205,6 +205,7 @@ async def test_the_settings_entities_exist(hass: HomeAssistant) -> None:
         "sensor.pool_supervisor_reason",
         "sensor.pool_pdc_state",
         "binary_sensor.pool_solar_ok",
+        "binary_sensor.pool_water_reading_fresh",
     ):
         assert hass.states.get(entity_id) is not None, entity_id
 
@@ -1324,6 +1325,10 @@ async def test_story_section_4_entity_ids(hass: HomeAssistant) -> None:
         "number.pool_antifreeze_on_c",
         "number.pool_antifreeze_off_c",
         "number.pool_winter_hours",
+        # water chemistry (v0.8.0)
+        "number.pool_orp_target",
+        "number.pool_orp_max_extra_hours",
+        "number.pool_ph_ceiling",
         # windows
         "time.pool_pump_start",
         "time.pool_pump_end",
@@ -1341,6 +1346,7 @@ async def test_story_section_4_entity_ids(hass: HomeAssistant) -> None:
         "switch.pool_chlorine_target_control",
         "switch.pool_dry_run",
         "switch.pool_grid_day_topup",
+        "switch.pool_orp_control",
         # sensors
         "sensor.pool_supervisor_reason",
         "sensor.pool_pdc_state",

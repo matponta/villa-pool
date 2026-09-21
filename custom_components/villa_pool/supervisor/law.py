@@ -45,6 +45,7 @@ from .pump import (
     pump_plan,
 )
 from .solar import solar_step
+from .water import orp_trim, read_quality
 from .windows import in_slot, in_window
 
 # Modes in which the supervisor drives nothing at all (rung 1 of the ladder).
@@ -68,6 +69,18 @@ def decide(state: PoolState, mem: Memory) -> tuple[Decision, Memory]:
         mem, state.outdoor_temp, cfg.antifreeze_on_c, cfg.antifreeze_off_c
     )
     pump_confirmed = is_confirmed(mem, mono)
+    # Chemistry (§5.3, §9). Here because `mem` has just been advanced by
+    # `confirm_step`, so `pump_running_since` is this tick's, and because the
+    # trim has to be known before the chlorine *demand* is asked — which is
+    # itself before the pump is sized (see the ordering note below).
+    #
+    # `trim.hours` is 0.0 whenever the reading is stale, the probe is missing
+    # or the switch is off, which is exactly what makes this a no-op against
+    # v0.6.0 rather than a new control law. The rung-1 paths below return
+    # before ever using it: a frozen supervisor drives nothing, chemistry
+    # included.
+    quality = read_quality(state, mem)
+    trim = orp_trim(state, quality)
     was_running = mem.pdc_state in RUNNING_STATES
 
     # --- rung 1: the supervisor is switched out of the loop entirely ---------
@@ -189,7 +202,7 @@ def decide(state: PoolState, mem: Memory) -> tuple[Decision, Memory]:
     # then decide what it actually gets once the speed is known.
     chlorine_demand, _ = chlorine_decision(
         state, pump_confirmed=True, pump_speed=None,
-        pdc_state=pdc_state, antifreeze=antifreeze,
+        pdc_state=pdc_state, antifreeze=antifreeze, orp_trim_h=trim.hours,
     )
 
     # --- the pump (rung 9 + everything above that needs flow) ----------------
@@ -203,7 +216,7 @@ def decide(state: PoolState, mem: Memory) -> tuple[Decision, Memory]:
     pdc_wants_flow = pdc_state in RUNNING_STATES or _pdc_would_start(
         state, mem, pump_confirmed
     )
-    catchup = catchup_active(state) and state.mode != MODE_WINTER
+    catchup = catchup_active(state, trim.hours) and state.mode != MODE_WINTER
 
     pump_on, pump_speed, requesters = pump_plan(
         cfg=cfg,
@@ -219,13 +232,14 @@ def decide(state: PoolState, mem: Memory) -> tuple[Decision, Memory]:
 
     chlorine_on, chlorine_reason = chlorine_decision(
         state, pump_confirmed=pump_confirmed, pump_speed=pump_speed,
-        pdc_state=pdc_state, antifreeze=antifreeze,
+        pdc_state=pdc_state, antifreeze=antifreeze, orp_trim_h=trim.hours,
     )
     reason = _reason_line(
         state=state, mem=mem, pdc_state=pdc_state, pdc_reason=pdc_reason,
         pump_on=pump_on, pump_speed=pump_speed, requesters=requesters,
         chlorine_on=chlorine_on, chlorine_reason=chlorine_reason,
         antifreeze=antifreeze, pump_confirmed=pump_confirmed,
+        orp_note=_orp_note(trim),
     )
 
     return (
@@ -248,9 +262,17 @@ def decide(state: PoolState, mem: Memory) -> tuple[Decision, Memory]:
                 "solar_ok": mem.solar_ok,
                 "pump_confirmed": pump_confirmed,
                 "antifreeze": antifreeze,
-                "chlorine_hours_missing": round(hours_missing(state), 2),
+                "chlorine_hours_missing": round(hours_missing(state, trim.hours), 2),
                 "catchup": catchup,
                 "cover_cutoff": cover_cutoff(state),
+                # --- water chemistry (§5.3, §9) --------------------------
+                "orp_trim_h": trim.hours,
+                "orp_reason": trim.reason,
+                "orp_suspended_by_ph": trim.suspended,
+                "water_fresh": quality.fresh,
+                "water_ph": quality.ph,
+                "water_orp": quality.orp,
+                "water_ec": quality.ec,
             },
         ),
         mem,
@@ -274,9 +296,22 @@ def _pdc_would_start(state: PoolState, mem: Memory, pump_confirmed: bool) -> boo
     return solar_conditions(state, mem) or grid_ok
 
 
+def _orp_note(trim) -> str | None:
+    """The chemistry fragment for the reason line, or None to stay quiet.
+
+    Shown only when it changed something or is deliberately refusing to. The
+    ordinary "control off" and "not counted, pump not in marcia" cases would
+    otherwise print on every tick of every pump-off night and train the owner
+    to stop reading the line.
+    """
+    if trim.suspended or trim.hours:
+        return trim.reason
+    return None
+
+
 def _reason_line(*, state, mem, pdc_state, pdc_reason, pump_on, pump_speed,
                  requesters, chlorine_on, chlorine_reason, antifreeze,
-                 pump_confirmed) -> str:
+                 pump_confirmed, orp_note=None) -> str:
     """One line the owner reads first when something looks wrong (STORY §4).
 
     Deliberately flat and boring: actuator, what it is doing, why. No jargon
@@ -293,6 +328,8 @@ def _reason_line(*, state, mem, pdc_state, pdc_reason, pump_on, pump_speed,
     else:
         pdc_txt = f"PdC {pdc_state} — {pdc_reason}"
     cl_txt = f"chlorine {'ON' if chlorine_on else 'OFF'} — {chlorine_reason}"
+    if orp_note:
+        cl_txt = f"{cl_txt} [{orp_note}]"
     prefix = "ANTIFREEZE: " if antifreeze else ""
     return f"{prefix}{pump_txt}; {pdc_txt}; {cl_txt}"
 
