@@ -394,9 +394,38 @@ expires by itself after 4 h, where `closed` lasts months.
 - Flow at 30 % (verify at first cold snap; tune `pool_portata_minima`).
 - Chlorinator minimum speed (step test 80 → 30 %, 5 min per step, watching
   `salt_chlorinator_running`).
-- Chlorine target is a proxy in hours; the real target is FAC 1.5–2 ppm. An ORP
-  probe (ESPHome) is in the owner's June plan; when the Modbus bridge to the
-  UNIKO lands, switch the target from hours to estimated grams.
+- ~~Chlorine target is a proxy in hours; the real target is FAC 1.5–2 ppm. An
+  ORP probe (ESPHome) is in the owner's June plan; when the Modbus bridge to
+  the UNIKO lands, switch the target from hours to estimated grams.~~
+  **PARTIALLY ADDRESSED 2026-09-21** — not by the ESPHome probe but by a
+  YINMIK WF-3188 tuya-local tester dropped in the skimmer. Shipped in v0.8.0
+  as `switch.pool_orp_control`, **default OFF**.
+
+  The target stays in hours. A fresh ORP reading only *extends* it, by up to
+  `number.pool_orp_max_extra_hours`, and never switches the cell — so with the
+  switch off, no probe, or a stale reading, §5.3 is unchanged. Three owner
+  decisions are recorded here rather than left in the code:
+
+  1. **Extension only, no cut.** A cut oscillates: it can stop the cell, which
+     stops the pump, which makes the reading stale, which removes the cut. A
+     5-minute pump cycle, found in the pre-tag review and reproduced in a
+     simulation.
+  2. **A pH ceiling suspends the extension** (`number.pool_ph_ceiling`, 7.7).
+     Above it the chlorine made is mostly inactive, so the answer is acid, not
+     cell hours — and the supervisor cannot dose acid, so it says so in the
+     reason line.
+  3. **The ORP target is owner-set, not a textbook number**, because cyanuric
+     acid and the probe's own offset both shift it for this pool specifically.
+
+  What motivated it, measured the same day: the cell ran 6.69 h against a
+  6.0 h target — the supervisor believed the day was done — while the
+  reference measurement gave FAC 1.2 ppm, under the 1.5–2 above.
+
+  Still open: whether this probe is good enough to switch on. Its EC agrees
+  with the reference to 3.4 %, but its ORP read −102 mV against it and neither
+  pH nor ORP had settled after 16 min of flow. The switch stays OFF until a
+  long run says they plateau. The estimated-grams target via the UNIKO Modbus
+  bridge is untouched and still open.
 - Pool volume 67–90 m³ discrepancy (documents vs owner).
 
 ## 10. Kick-off prompt (paste into Claude Code in the new repo)

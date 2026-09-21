@@ -24,7 +24,7 @@ skeleton and conventions and shares nothing at runtime.**
 Target: Home Assistant **2026.8.3** (Python ≥ 3.14). Single instance,
 config-flow hub.
 
-## Status: v0.6.0 in the repo; deployed and actuating since 2026-09-17 20:04.
+## Status: v0.8.0 in the repo; deployed and actuating since 2026-09-17 20:04.
 
 **The integration is live on the owner's HA and `switch.pool_dry_run` is OFF.**
 Anything in this repo that reads as "not yet deployed" is stale — `NEXT_SESSION.md`
@@ -146,6 +146,78 @@ one extra compressor start, but the pool now *reaches and holds* the minimum
 instead of drifting below it — so it delivers about twice the heat. Cheaper per
 kWh, more kWh. If the bill is the complaint, the lever is the switch.
 
+### The ORP/pH chlorine trim (§5.3, §9 — owner go-ahead 2026-09-21)
+
+§9 recorded that "chlorine target is a proxy in hours; the real target is FAC
+1.5-2 ppm". v0.8.0 closes half of that with a YINMIK WF-3188 tester in the
+skimmer. **It ships inert**: `switch.pool_orp_control` defaults OFF, and with
+it off — or with no probe, or a stale reading — `decide()` is the v0.6.0 hours
+law. `tests/test_water.py::TestDegradesToTheHoursLaw` is the
+`test_dry_run_calls_nothing` of this release.
+
+**The trim moves the hours TARGET; it never switches the cell.** Four things
+fall out of that one choice:
+
+1. **Hysteresis is free.** Bang-bang on ORP would chatter the relay; trimming
+   an hours target leaves the existing integrator in the loop. §9 gap 4 is
+   what the other choice looks like on the SOLAR target.
+2. **A stale reading is not a special case** — trim 0.0, §5.3 unchanged. The
+   PdC's "a read gap is not evidence", applied to chemistry.
+3. **A failed probe cannot run away.** The bound is in hours.
+4. **ORP never gates the cell on or off**, and cannot: no flow, no reading.
+   The hours law is always the cold start. The corollary is a real limitation
+   — the trim can EXTEND a run in progress but cannot start one from a fully
+   stopped pool. In practice the pump runs its filtration window anyway.
+
+**The skimmer lies, so a reading only counts after a flush.** Measured
+2026-09-21: stagnant EC 7.01 mS/cm against 8.906 flushed, **21 % low**, with
+the owner's own reference tool putting the pool at 8.61 — two instruments, one
+conclusion. `WATER_FLUSH_S` (180 s, measured settling ~95 s from confirmation
+plus margin) is counted against `Memory.pump_running_since`, so it *includes*
+the 60 s pump confirmation. After a restart with the pump already running the
+reading is pessimistically stale for ~2 min, because `restore_memory` stamps
+that field exactly `PUMP_CONFIRM_S` back; deliberate, and it costs nothing.
+
+**EXTENSION ONLY — a cut oscillates.** Found in the pre-tag review and
+verified by simulation. 20:30, pump window shut and chlorine window open, 5.6 h
+done against a 6.0 h target, ORP above target: fresh reading → cut → target
+5.5 → met → chlorine off → pump off → reading stale → trim 0 → target 6.0 →
+0.4 h missing → catch-up demands the pump → on → fresh → cut returns. **A
+5-minute pump cycle, 12 starts an hour.** The trim's input depends on the
+thing it controls. Extension has no such loop: raising the target keeps the
+pump running and the reading fresh, and going stale falls back to the hours
+law, which settles to "off" and stays there. Pinned by
+`TestStability::test_no_pump_cycling_at_the_target_boundary`, which was
+confirmed to FAIL with the cut reintroduced. A cut could be made safe with a
+"chlorine done for today" latch in `Memory`, reset at midnight and re-derived
+on restart — a separate step with its own restart semantics.
+
+**The pH ceiling is the rung that matters.** Chlorine's active form is HOCl and
+its share collapses as pH rises (~75 % at 7.0, ~50 % at 7.5, ~22 % at 8.0),
+while a salt cell *raises* pH as a byproduct — the owner's log drifts to
+7.7-7.8 and is corrected with 2 kg of pH-. Above `ph_ceiling` the extension is
+suspended and the reason line asks for acid. Without it the loop would extend,
+see no improvement, extend again and hit its cap every day, winding up against
+a constraint it has no authority over. **An unknown pH suspends it too**: the
+ceiling exists to prevent windup, so losing the ceiling loses the extension.
+
+**The target is owner-settable on purpose.** Cyanuric acid suppresses ORP for
+a given FAC and accumulates from the slow tablets, and the probe carries its
+own offset (−102 mV against the owner's reference on 2026-09-21). Setting
+`number.pool_orp_target` from THIS pool's own readings absorbs both, which is
+the absolute-threshold form of a baseline-delta.
+
+**The measurement that motivated it**, 2026-09-21: the cell ran 6.69 h against
+a 6.0 h target — `chlorine_hours_missing` 0, the day "done" — and the
+reference measured FAC 1.2 ppm, under §9's 1.5-2. The hours proxy said done;
+the water said short. `TestTheGapSection9Recorded` replays exactly that.
+
+**Still unresolved: whether the probe deserves this.** pH and ORP had not
+settled after 16 min of flow (EC settled in 90 s and held), and ORP read
+−102 mV against the reference whose own mV series is erratic. The switch is
+OFF until a long run says pH and ORP plateau. EC agreed to 3.4 %, so the
+salinity channel is trustworthy today.
+
 ### The heating-session log (§5.4)
 
 `supervisor/session.py` brackets each heating run and records what it cost, so
@@ -232,7 +304,8 @@ law decides → engine reports. No module skips a step.
   Submodules: `windows` (the only place midnight wrap-around is interpreted) ·
   `solar` (hysteresis + entry dwell) · `pdc` (the 4-state machine) · `chlorine`
   (enable-to-target) · `pump` (demand collection + sequencing) · `cop`
-  (diagnostic model) · `law` (`decide()` + the §5.5 ladder + `restore_memory`) ·
+  (diagnostic model) · `water` (is the chemistry reading real, and the ORP
+  trim) · `law` (`decide()` + the §5.5 ladder + `restore_memory`) ·
   `actuation` (should this lever be commanded at all) · `model` (the data
   carriers).
 - `engine.py` — builds `PoolState`, runs `decide()`, logs intent **on change**

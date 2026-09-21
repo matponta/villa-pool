@@ -56,6 +56,9 @@ CONF_CHLORINATOR_SWITCH: Final = "chlorinator_switch"
 CONF_CHLORINATOR_RUNNING: Final = "chlorinator_running"
 CONF_CHLORINATOR_HOURS: Final = "chlorinator_hours_today"
 CONF_WATER_TEMP: Final = "water_temp_sensor"
+CONF_WATER_PH: Final = "water_ph_sensor"
+CONF_WATER_ORP: Final = "water_orp_sensor"
+CONF_WATER_EC: Final = "water_ec_sensor"
 CONF_OUTDOOR_TEMP: Final = "outdoor_temp_sensor"
 CONF_SOLAR_HEADROOM: Final = "solar_headroom_sensor"
 CONF_GRID_POWER: Final = "grid_power_sensor"
@@ -91,6 +94,15 @@ DEFAULT_CHLORINATOR_SWITCH: Final = "switch.clorinatore"
 DEFAULT_CHLORINATOR_RUNNING: Final = "binary_sensor.salt_chlorinator_running"
 DEFAULT_CHLORINATOR_HOURS: Final = "sensor.salt_chlorinator_runtime_today"
 DEFAULT_WATER_TEMP: Final = "sensor.gw3000a_soil_temperature_1"
+# Water chemistry, YINMIK WF-3188 in the skimmer via tuya-local (added
+# 2026-09-21). The RAW device sensors, not the `*_filtrato` filter helpers:
+# those exist to tame the recorder (the raw DPs push every ~0.5-2 s and are
+# excluded from it), and the law wants the freshest value, not the throttled
+# copy. The noise is immaterial to both decisions the law makes with them
+# (pH +/-0.05 against a 7.7 ceiling; ORP +/-3.5 mV against a ~100 mV scale).
+DEFAULT_WATER_PH: Final = "sensor.pool_tester_ph"
+DEFAULT_WATER_ORP: Final = "sensor.pool_tester_orp"
+DEFAULT_WATER_EC: Final = "sensor.pool_tester_ec"
 DEFAULT_OUTDOOR_TEMP: Final = "sensor.gw3000a_outdoor_temperature"
 # Already excludes the PdC, so it does not collapse when the PdC starts (§2).
 DEFAULT_SOLAR_HEADROOM: Final = "sensor.solar_headroom_for_heater"
@@ -288,3 +300,66 @@ REQ_ANTIFREEZE: Final = "antifreeze"
 REQ_CATCHUP: Final = "catchup"
 REQ_POSTRUN: Final = "postrun"
 REQ_WINTER: Final = "winter"
+
+
+# --- Water chemistry: the ORP trim (§5.3, §9) --------------------------------
+# The tester sits in the SKIMMER. With the pump off that is a small pocket
+# behind the weir flap holding surface water, and it lies: measured 2026-09-21,
+# stagnant EC read 7.01 mS/cm against 8.906 flushed, 21 % low, and the owner's
+# own reference tool independently put the pool at 8.61. So a reading only
+# counts once the pump has been CONFIRMED in marcia long enough to flush the
+# skimmer.
+#
+# Measured settling that day: pump on at 20:41:16, in marcia at 20:41:26, EC
+# still stagnant at 20:41:39, ramping by 20:42:00, plateau at 20:43:00 and flat
+# for the next 14 min. That is ~95 s from confirmation; 180 s is that with
+# margin, and it is measured against `pump_running_since`, so it INCLUDES the
+# 60 s the pump confirmation already waits.
+WATER_FLUSH_S: Final = 180
+
+# ORP deficit -> extra chlorine hours. Full `orp_max_extra_hours` is reached at
+# this many mV below target; the clamps do the rest.
+ORP_TRIM_FULL_SCALE_MV: Final = 100.0
+
+# The target is deliberately owner-settable rather than a textbook number.
+# Cyanuric acid suppresses ORP for a given FAC and accumulates from the slow
+# tablets, and the probe carries its own offset (measured -102 mV against the
+# owner's reference on 2026-09-21). Setting the target from THIS pool's own
+# readings absorbs both, which is the absolute-threshold form of the
+# baseline-delta idea.
+DEFAULT_ORP_TARGET_MV: Final = 700.0
+# EXTENSION ONLY -- the trim can raise the hours target, never lower it.
+#
+# Two reasons, and the second is the hard one.
+#
+# 1. Asymmetry. ORP wrongly low costs cell hours; ORP wrongly high costs a
+#    green pool and a week of recovery. Extension is also the direction the
+#    pool actually needs: on 2026-09-21 the cell ran 6.69 h against a 6.0 h
+#    target -- `chlorine_hours_missing` 0, target "met" -- and the reference
+#    measured FAC 1.2 ppm, under the 1.5-2 of §9.
+#
+# 2. A CUT OSCILLATES, because the trim's input depends on the thing it
+#    controls. 20:30, pump window shut and chlorine window open, 5.6 h done
+#    against a 6.0 h target, ORP above target: fresh reading -> cut -> target
+#    5.5 -> met -> chlorine off -> pump off -> reading goes stale -> trim 0 ->
+#    target 6.0 -> 0.4 h missing -> chlorine demands the pump -> pump on ->
+#    fresh again -> cut returns. A ~4 min pump cycle for the rest of the
+#    window. Killing the cut removes it by construction: raising the target
+#    keeps the pump running, which keeps the reading fresh, which keeps the
+#    trim -- self-consistent -- and going stale only ever falls back to the
+#    plain hours law, which settles to "off" and stays there.
+#
+# A cut could be made safe with a "chlorine done for today" latch in Memory,
+# reset at midnight and re-derived on restart. That is a separate step with
+# its own restart semantics, not a clause bolted onto this one.
+DEFAULT_ORP_MAX_EXTRA_HOURS: Final = 2.0
+
+# Above this pH the trim is suspended entirely. Chlorine's active form is HOCl
+# and its fraction collapses with pH -- ~75 % at 7.0, ~50 % at 7.5, ~22 % at
+# 8.0 -- while a salt cell RAISES pH as a byproduct (the owner's log drifts to
+# 7.7-7.8 and is corrected with 2 kg of pH-). So at high pH the answer is acid,
+# not cell hours: without this rung an ORP loop would extend, see no
+# improvement, extend again and hit its cap every day, burning the cell against
+# a constraint it has no authority over. The supervisor cannot dose acid, so it
+# says so in the reason line instead.
+DEFAULT_PH_CEILING: Final = 7.7

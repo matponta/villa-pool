@@ -51,6 +51,9 @@ from .const import (
     DEFAULT_SOLAR_ON_W,
     DEFAULT_SOLAR_TARGET_TEMP,
     DEFAULT_TARGET_CHLORINE_HOURS,
+    DEFAULT_ORP_MAX_EXTRA_HOURS,
+    DEFAULT_ORP_TARGET_MV,
+    DEFAULT_PH_CEILING,
     DEFAULT_TARGET_TURNOVERS,
     DEFAULT_WINTER_CHLORINE_HOURS,
     DEFAULT_WINTER_HOURS,
@@ -193,6 +196,11 @@ class SupervisorEngine:
                 v("cover_chlorine_factor", DEFAULT_COVER_CHLORINE_FACTOR)
             ),
             winter_hours=float(v("winter_hours", DEFAULT_WINTER_HOURS)),
+            orp_target=float(v("orp_target", DEFAULT_ORP_TARGET_MV)),
+            orp_max_extra_hours=float(
+                v("orp_max_extra_hours", DEFAULT_ORP_MAX_EXTRA_HOURS)
+            ),
+            ph_ceiling=float(v("ph_ceiling", DEFAULT_PH_CEILING)),
             windows=Windows(
                 pump_start=v("pump_start", _parse_time(DEFAULT_PUMP_START)),
                 pump_end=v("pump_end", _parse_time(DEFAULT_PUMP_END)),
@@ -243,7 +251,11 @@ class SupervisorEngine:
             grid_heating=bool(v("grid_heating", True)),
             grid_day_topup=bool(v("grid_day_topup", DEFAULT_GRID_DAY_TOPUP)),
             chlorine_target_control=bool(v("chlorine_target_control", True)),
+            orp_control=bool(v("orp_control", False)),
             volume_today_m3=float(data.get("volume_today_m3") or 0.0),
+            water_ph=data.get("water_ph"),
+            water_orp=data.get("water_orp"),
+            water_ec=data.get("water_ec"),
         )
 
     def _cover_closed_for_h(self, now: datetime) -> float | None:

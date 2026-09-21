@@ -4,6 +4,10 @@
 `binary_sensor.pool_antifreeze` is the freeze latch, added in v0.4.0: in winter
 it is the one thing the owner wants to be able to see at a glance, and reading
 it out of an attribute on the reason sensor is not glancing.
+
+`binary_sensor.pool_water_reading_fresh` (v0.8.0) is the same argument for the
+chemistry: the tester is in the skimmer, and whether a pH/ORP number means
+anything at all is the first question to ask about it.
 """
 from __future__ import annotations
 
@@ -16,7 +20,12 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import VillaPoolConfigEntry
-from .const import MODE_AUTO, SOLAR_OFF_DWELL_S, SOLAR_ON_DWELL_S
+from .const import (
+    MODE_AUTO,
+    SOLAR_OFF_DWELL_S,
+    SOLAR_ON_DWELL_S,
+    WATER_FLUSH_S,
+)
 from .coordinator import VillaPoolCoordinator
 from .entity import pool_device
 
@@ -30,6 +39,7 @@ async def async_setup_entry(
     async_add_entities([
         SolarOkBinarySensor(coordinator, entry),
         AntifreezeBinarySensor(coordinator, entry),
+        WaterReadingFreshBinarySensor(coordinator, entry),
     ])
 
 
@@ -152,4 +162,53 @@ class AntifreezeBinarySensor(PoolBinarySensorBase):
                 and settings.get("maintenance")
             ),
             "mode": settings.get("mode", MODE_AUTO),
+        }
+
+
+class WaterReadingFreshBinarySensor(PoolBinarySensorBase):
+    """Is the chemistry this tick the POOL's, or the skimmer pocket's?
+
+    ON once the pump has been in marcia for `WATER_FLUSH_S`. Off before that,
+    and off whenever the pump is not running, because the tester sits in the
+    skimmer: with no flow that is a small pocket behind the weir flap holding
+    surface water. Measured 2026-09-21 it read EC 7.01 mS/cm stagnant against
+    8.906 flushed — 21 % low — and the owner's own reference tool put the pool
+    at 8.61, confirming which of the two was lying.
+
+    `unknown` rather than off while the supervisor is frozen (maintenance,
+    `manual`, `closed`): those ticks return before the law ever looks at the
+    chemistry, and reporting a judgement it did not make would be a lie.
+    """
+
+    _attr_name = "Water reading fresh"
+    _attr_icon = "mdi:water-check"
+
+    def __init__(self, coordinator, entry: VillaPoolConfigEntry) -> None:
+        super().__init__(coordinator, entry, "water_reading_fresh")
+
+    @property
+    def is_on(self) -> bool | None:
+        engine = self._engine
+        decision = getattr(engine, "decision", None)
+        if decision is None:
+            return None
+        return decision.detail.get("water_fresh")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        engine = self._engine
+        decision = getattr(engine, "decision", None)
+        detail = decision.detail if decision else {}
+        settings = self._entry.runtime_data.settings
+        return {
+            "ph": detail.get("water_ph"),
+            "orp_mv": detail.get("water_orp"),
+            "ec_ms_cm": detail.get("water_ec"),
+            "flush_seconds_required": WATER_FLUSH_S,
+            "orp_trim_h": detail.get("orp_trim_h"),
+            "orp_reason": detail.get("orp_reason"),
+            "suspended_by_ph": detail.get("orp_suspended_by_ph"),
+            "orp_control": settings.get("orp_control", False),
+            "orp_target": settings.get("orp_target"),
+            "ph_ceiling": settings.get("ph_ceiling"),
         }
