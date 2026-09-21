@@ -1,0 +1,106 @@
+# Cards added to `pool-overview-v2` for v0.8.0 (the ORP/pH chlorine trim).
+#
+# Applied live on 2026-09-21 with ha_config_set_dashboard(patch=...) against a
+# fresh config_hash, per CLAUDE.md: that dashboard is storage-mode and
+# hand-built by the owner, so it is NEVER replaced wholesale — a full-config
+# write would throw away work that lives nowhere else.
+#
+#   config_hash before: 22d8115666003041
+#   config_hash after:  a15908237b013d27
+#
+# Both `add` blocks were guarded by JSON-Patch `test` ops on the card that was
+# about to be displaced, so a shifted index could not silently scribble over
+# someone else's card:
+#
+#   test /views/0/sections/8/cards/7/type      == "statistics-graph"
+#   test /views/0/sections/9/cards/17/heading  == "Inverno e antigelo"
+#
+# NOTE the ids are the LIVE ones (`*.pool_poolbrain_*`), not the STORY §4 ones
+# (`*.pool_*`). The device is named PoolBrain on the owner's HA. A fresh re-add
+# of the integration would produce the §4 ids and break every card here — the
+# open question CLAUDE.md records under "The live entity ids are NOT the §4 ids".
+
+# ---------------------------------------------------------------------------
+# 1. Section 8 — "5 · Analisi acqua — tester YINMIK WF-3188"
+#    Inserted at index 7, i.e. AFTER the five tester value tiles and BEFORE the
+#    "pH e ORP — 7 giorni" statistics-graph (which moved 7 -> 8). It sits with
+#    the numbers it qualifies: with the pump off the tester is in a stagnant
+#    skimmer pocket and reads ~21 % low on EC.
+# ---------------------------------------------------------------------------
+- op: add
+  path: /views/0/sections/8/cards/7
+  value:
+    type: tile
+    entity: binary_sensor.pool_poolbrain_water_reading_fresh
+    name: Lettura valida (skimmer lavato)
+    icon: mdi:water-check
+    grid_options: {columns: 12, rows: 1}
+
+# ---------------------------------------------------------------------------
+# 2. Section 9 — "PoolBrain — settaggi"
+#    A new subtitle group inserted at index 17, between "Obiettivi e velocità"
+#    (10..16) and "Inverno e antigelo" (which moved 17 -> 22). The heading says
+#    "sperimentale, spento" on purpose: the switch ships OFF and stays off
+#    until a long pump run shows pH and ORP actually plateau.
+# ---------------------------------------------------------------------------
+- op: add
+  path: /views/0/sections/9/cards/17
+  value:
+    type: heading
+    heading: Cloro su ORP — sperimentale, spento
+    heading_style: subtitle
+    icon: mdi:flash-triangle-outline
+
+- op: add
+  path: /views/0/sections/9/cards/18
+  value:
+    type: tile
+    entity: switch.pool_poolbrain_orp_control
+    name: Trim ORP attivo
+    icon: mdi:flash-triangle-outline
+    grid_options: {columns: 12, rows: 1}
+
+- op: add
+  path: /views/0/sections/9/cards/19
+  value:
+    type: tile
+    entity: number.pool_poolbrain_orp_target
+    name: ORP bersaglio
+    icon: mdi:flash-triangle-outline
+    grid_options: {columns: 6, rows: 1}
+    features: [{type: numeric-input, style: buttons}]
+
+- op: add
+  path: /views/0/sections/9/cards/20
+  value:
+    type: tile
+    entity: number.pool_poolbrain_ph_ceiling
+    name: Tetto pH
+    icon: mdi:ph
+    grid_options: {columns: 6, rows: 1}
+    features: [{type: numeric-input, style: buttons}]
+
+- op: add
+  path: /views/0/sections/9/cards/21
+  value:
+    type: tile
+    entity: number.pool_poolbrain_orp_max_extra_hours
+    name: Ore extra max
+    icon: mdi:plus-thick
+    grid_options: {columns: 12, rows: 1}
+    features: [{type: numeric-input, style: buttons}]
+
+# ---------------------------------------------------------------------------
+# THE INVERSE — remove in DESCENDING index order, or the shifts will bite.
+# Take a fresh config_hash first; these indices are only valid while nothing
+# else has been inserted into sections 8 or 9.
+# ---------------------------------------------------------------------------
+#
+#   - {op: test,   path: /views/0/sections/9/cards/17/heading, value: "Cloro su ORP — sperimentale, spento"}
+#   - {op: test,   path: /views/0/sections/8/cards/7/entity,   value: binary_sensor.pool_poolbrain_water_reading_fresh}
+#   - {op: remove, path: /views/0/sections/9/cards/21}
+#   - {op: remove, path: /views/0/sections/9/cards/20}
+#   - {op: remove, path: /views/0/sections/9/cards/19}
+#   - {op: remove, path: /views/0/sections/9/cards/18}
+#   - {op: remove, path: /views/0/sections/9/cards/17}
+#   - {op: remove, path: /views/0/sections/8/cards/7}
