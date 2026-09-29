@@ -18,8 +18,11 @@ actuating.**
   **off**, the safety cutoff and every `pool_allerta_*` **on**.
 - Owner-tuned settings, deliberately away from the shipped defaults: min temp
   **29.0** (default 27.0), solar target **30.0** (28.0), chlorine hours **7**
-  (8). `sensor.pool_poolbrain_cover_closed_for` is `unavailable` — the cover
-  sensor still does not exist, so every cover rule is still inert.
+  (8). ~~`sensor.pool_poolbrain_cover_closed_for` is `unavailable` — the cover
+  sensor still does not exist, so every cover rule is still inert.~~
+  **Superseded 2026-09-22** — the cover sensor is live and wired, and the cover
+  rules now bite. See the section directly below. (`target_chlorine_hours` read
+  **8.0** on 2026-09-22, not the 7 recorded here.)
 
 **This is a snapshot ~1.5 h after going live, not the 24 h comparison §8 step 1
 asked for.** That comparison has still not been written up. The claim worth
@@ -41,6 +44,109 @@ the §4 ids and break every card. Worth a deliberate decision rather than
 discovering it during a reinstall.
 
 ---
+
+## The cover sensor lands — the §1 telo input (2026-09-22) — no version bump
+
+**Zero lines of integration code changed.** All of this is HA-side: the
+integration takes an entity id from the options flow and is indifferent to how
+it is produced. That is the whole reason this was a config job and not a release.
+
+### What was done
+
+- The owner's **Shelly BLU Door/Window** (`38:39:8F:B1:48:0B`, device
+  `Pool Cover`, area `pool`) came online at 00:14 on 22/9, reaching HA as
+  **BTHome over the Everything-Presence-One BLE proxies** — the same path the
+  house's other BLU sensors use. No Shelly BLU gateway was needed.
+- Created `binary_sensor.pool_telo_chiuso` (template helper, HA config entry
+  `01M33194SS4294YYG9MDSZKEDV`): inverts the raw entity and carries an
+  availability template. This is the id STORY §1/§4 name.
+- Set `cover_closed` in the villa_pool options flow to that helper.
+- Set `number.pool_poolbrain_cover_chlorine_factor` to **0.8** (shipped default
+  0.5), an owner decision — see STORY §3 amendment.
+- Enabled `sensor.shelly_blu_door_window_480b_signal_strength` (BTHome registers
+  it disabled by default). It is the number that says whether this link can be
+  trusted to drive a 24 h integrator.
+
+### Live-verify result
+
+Measured on the owner's HA immediately after wiring, cover physically shut:
+
+| entity | value | |
+|---|---|---|
+| `binary_sensor.shelly_blu_door_window_480b_window` | `off` | raw, `device_class: window` |
+| `binary_sensor.pool_telo_chiuso` | `on` | inverted ✓ |
+| `sensor.pool_poolbrain_cover_closed_for` | `0.33` h | the integrator is live ✓ |
+| `number.pool_poolbrain_cover_chlorine_factor` | `0.8` | ✓ |
+| `sensor.pool_poolbrain_chlorine_hours_missing` | `6.4` | 8.0 × 0.8 — the factor is applied ✓ |
+| `switch.pool_poolbrain_dry_run` | `off` | still actuating across the reload ✓ |
+
+The `6.4` is the check that matters: it was `8` half an hour earlier. The cover
+rule, inert since v0.1.0, now bites.
+
+### What the adversarial pass found — five things, four of them real
+
+1. **The raw entity is inverted, and wiring it straight in would have been
+   silent.** `device_class: window` means `on` = OPEN, while
+   `coordinator.onoff` reads `on` as closed. The pool would have halved its
+   chlorine target exactly when the cover was OFF, and cut the cell after 24 h
+   of open sun. No error, no odd reason line. Caught before wiring.
+2. **A bare inversion loses the read gap.** `not is_state(...)` renders truthy
+   when the source is missing — "cover closed" on a dead sensor. Hence the
+   availability template. Verified: `has_value()` on an absent entity is
+   `False`, so the helper goes `unavailable` and every cover rule goes inert,
+   which is what `_cover_closed_for_h` and `coordinator.onoff` already expect.
+3. **The first 24 h window is fake.** `_cover_closed_for_h` reads the helper's
+   `last_changed`, which is helper-creation time, not when the cover shut. The
+   first cutoff is therefore measured from 00:28 on 22/9. Self-corrects at the
+   first opening; recorded rather than worked around.
+4. **The polarity is observed in ONE position.** Cover shut ↔ raw `off` ↔
+   helper `on`. The sensor has never been seen to change state. A reed has two
+   positions so the inference holds, but the first opening is the real check.
+5. **A false alarm worth recording.** After the options-flow reload,
+   `sensor.pool_poolbrain_supervisor_reason` sat at `starting up` for minutes
+   and this was briefly read as a hung tick holding the engine lock. It was
+   not. **The engine has no timer of its own** — `start()` only subscribes to
+   the coordinator (`engine.py:125`), so the first post-reload decision lands
+   only after the coordinator's next 60 s poll completes, and reading the state
+   before that shows the pre-tick placeholder. Do not diagnose a hang from a
+   single early read.
+
+### Also decided: image detection is dropped, not postponed
+
+STORY §3 said "Image detection (AI Task) postponed". It was explored on 21-22/9
+against `camera.g6_bbq_high_resolution_channel` (the only camera that frames the
+pool) and **dropped** by the owner. Two findings:
+
+- **UniFi Protect cannot do it, and not for a configuration reason.** Its
+  detections are *event*-shaped (`event.*_motion_detection`,
+  `*_smart_detection`, `*_sound_detection`) over a fixed class list — person,
+  vehicle, animal, the audio set — with no "cover" in it and no way to add one.
+  A closed cover generates no event; it is the absence of change. Even the AI
+  Key only adds models *over* the base classes. A state re-derived from latched
+  events also has nothing to re-derive from at boot, which is the failure class
+  this repo already fights.
+- **An LLM check needs a vision provider this HA does not have.** `ai_task` is
+  loaded and `ai_task.generate_data` has both `attachments` and `structure`, but
+  there is no AI Task entity and no conversation LLM configured.
+
+One idea from that exploration is worth keeping if this is ever revisited:
+Protect is a poor *sensor* but a good *trigger* — the cover only moves when
+someone is at the pool, so `person_detected` going clear is a far better wake-up
+than polling.
+
+### Still owed
+
+- **`automation.pool_allerta_telo_aperto_chiudi_casa`** (§1). It was blocked on
+  this entity id and is now writable; deliberately not written yet, because it
+  starts sending the owner push notifications and that is the owner's call.
+- **One observation of the sensor changing state**, to convert the polarity from
+  inferred to measured.
+- **`signal_strength`** once the BTHome entry reloads. If it is marginal, the
+  fix already exists on site: the `Clorinatore` Shelly 1 Gen4 sits in area
+  `pool`, is mains-powered, and any mains Shelly Plus/Pro/Gen3/Gen4 can act as a
+  Bluetooth gateway.
+- **Walk `cover_chlorine_factor` down against measured FAC.** 0.8 is a
+  deliberately cautious starting point, not an answer.
 
 ## v0.8.0 — the ORP/pH chlorine trim (2026-09-21)
 

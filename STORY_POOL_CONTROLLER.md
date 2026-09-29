@@ -67,14 +67,16 @@ All verified live after creation.
   Sat F3 00–07 · F2 07–23 · F3 23–24; Sun/holidays F3. Verified `F1` at
   Thu 08:52.
 
-NOT done (waits for the cover sensor, owner installs 20–21/9):
+STILL NOT done — but no longer blocked (the cover sensor landed 2026-09-22):
 - `automation.pool_allerta_telo_aperto_chiudi_casa` — trigger
   `input_button.chiudi_notte` pressed; condition `binary_sensor.pool_telo_chiuso`
   not `on`; action push `notify.mobile_app_matphone16`, `data.entity_id:
   camera.g6_bbq_high_resolution_channel` (iOS camera attachment),
   `push.interruption-level: time-sensitive`; repeat once after 20 min if still
-  open; distinct message when the sensor is `unavailable`. Final entity id
-  unknown at brief time: **ask, don't guess**.
+  open; distinct message when the sensor is `unavailable`. ~~Final entity id
+  unknown at brief time: **ask, don't guess**.~~ **The id is now known** —
+  `binary_sensor.pool_telo_chiuso`, the template helper described in §2. The
+  automation itself has still not been written.
 
 The integration consumes `pool_pompa_in_marcia`, `fascia_oraria` and
 `pool_telo_chiuso` as inputs; it does not re-implement them.
@@ -115,7 +117,7 @@ Inputs the integration reads (all exist unless marked):
 | Solar headroom | `sensor.solar_headroom_for_heater` | W = PV (`sensor.panel_production_power`, kW) − house (`sensor.shelly_consumo_casa_power`) − pool excluding heater. **Already excludes the PdC**, so it does not collapse when the PdC starts. PV part is Fusion Solar cloud, ~5 min. |
 | Grid power | `sensor.energy_grid_grid_consumption_power_grid_injection_power_net_power` | W, positive = import (Fusion Solar Casa). Diagnostics only. |
 | Tariff band | `sensor.fascia_oraria` | Phase 0, live (`F1`/`F2`/`F3`). |
-| Cover closed | `binary_sensor.pool_telo_chiuso` | Owner installs 20–21/9. Id TBD. |
+| Cover closed | `binary_sensor.pool_telo_chiuso` | **Live 2026-09-22.** A template helper, not the device: it inverts `binary_sensor.shelly_blu_door_window_480b_window` (Shelly BLU Door/Window, device `Pool Cover`, BTHome over the EP1 BLE proxies) and carries an availability template. The raw entity is `device_class: window`, so `on` = **open** — wiring it straight into the options flow would invert every cover rule. |
 | Bathing override | `input_boolean.pool_in_use` | Exists, on the dashboard. Keep as input. |
 | Night routine | `input_button.chiudi_notte` | "Chiudi Casa". |
 | Notify | `notify.mobile_app_matphone16` | iOS. |
@@ -137,7 +139,7 @@ alert automations (`pool_allerta_*`) — they are the owner's independent watchd
 | COP | Measured 2.82 (night, ~18 °C air, 95 Hz). Model COP vs outdoor air per §5.4; use it for estimates, log sessions to calibrate. |
 | Filtration speed | 80 % for now (bypass calibrated at 80 %, ΔT 2 K; chlorinator flow-switch minimum unknown). Step-down test later. |
 | Winter mode | Pump ≥ 2 h/day from 12:00 at 80 % with chlorine enabled; PdC off. **Antifreeze**: outdoor < 0 °C → pump continuous at `antifreeze_speed` (default 30 %, **tunable 30–80**), chlorinator OFF, release at ≥ +2 °C. *(Amended 2026-09-17: antifreeze also runs in `manual`/`closed` — see §5.5.)* |
-| Cover | Physical sensor is primary. Image detection (AI Task) postponed. Alert at Chiudi Casa if open. |
+| Cover | Physical sensor is primary. Image detection (AI Task) postponed. Alert at Chiudi Casa if open. *(Amended 2026-09-22: the physical sensor is live — see §2 — and image detection is **dropped**, not merely postponed. Two findings killed it: UniFi Protect's own detections are event-shaped with a fixed class list that has no "cover" in it, and an LLM check needs a vision provider this HA does not have. The owner also set `cover_chlorine_factor` to **0.8** rather than the shipped 0.5, because the 21/9 FAC measurement — 6.69 h run, target met, FAC 1.2 ppm against §9's 1.5–2 — showed the hours law already running lean at the FULL target. Walk it down against measured FAC.)* |
 | Pool volume | 90 m³ for turnover math (documents say 67–81; 90 is the conservative side). |
 
 ## 4. Entities the integration exposes

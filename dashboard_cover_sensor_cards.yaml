@@ -1,0 +1,133 @@
+# Cards added to `pool-overview-v2` when the §1 cover sensor landed (2026-09-22).
+# No version bump: not one line of integration code changed, only HA config.
+#
+# Applied live with ha_config_set_dashboard(patch=...) against a fresh
+# config_hash, per CLAUDE.md: that dashboard is storage-mode and hand-built by
+# the owner, so it is NEVER replaced wholesale — a full-config write would throw
+# away work that lives nowhere else.
+#
+#   config_hash before: a15908237b013d27
+#   config_hash after:  03696e847f892c42
+#
+# This one adds a WHOLE SECTION rather than cards inside an existing one, so
+# there was nothing to guard with a `test` op on a displaced card. The section
+# list was read immediately before the write and the insert point chosen from
+# it: index 9, after "5 · Analisi acqua" (8) and before "PoolBrain — settaggi"
+# (which moved 9 -> 10, and every section after it by one).
+#
+# Index 9 is deliberate, not convenient: the owner numbers the circuit
+# 1 Pompa · 2 Valvola · 3 PdC · 4 Clorinatore · 5 Analisi acqua, so the cover
+# becomes 6 and the numbering keeps reading in hydraulic order.
+#
+# The glance markdown in section 0 was left ALONE on purpose. It is the most
+# hand-written thing on the dashboard and a `replace` on that one long template
+# is the least reversible edit available; adding "7 · TELO" to it is a separate
+# decision for the owner.
+#
+# NOTE the ids are the LIVE ones (`*.pool_poolbrain_*`), not the STORY §4 ones
+# (`*.pool_*`) — except `binary_sensor.pool_telo_chiuso`, which is NOT an
+# integration entity at all but the owner's own template helper, and therefore
+# really does carry the §4 name. See CLAUDE.md, "The live entity ids are NOT the
+# §4 ids".
+#
+# Why a raw-sensor tile sits next to the inverted one: `..._480b_window` is
+# `device_class: window`, so `on` = OPEN, while `binary_sensor.pool_telo_chiuso`
+# reads `on` = CLOSED. Seeing both at once is what makes a future "why is the
+# chlorine halved?" debuggable in one glance instead of three.
+
+- op: add
+  path: /views/0/sections/9
+  value:
+    type: grid
+    cards:
+      - type: heading
+        heading: 6 · Telo — Shelly BLU Door/Window
+        icon: mdi:tent
+
+      - type: tile
+        entity: binary_sensor.pool_telo_chiuso
+        name: Telo chiuso
+        icon: mdi:tent
+        color: teal
+        grid_options: {columns: 6, rows: 1}
+
+      - type: tile
+        entity: sensor.pool_poolbrain_cover_closed_for
+        name: Chiuso da (h)
+        icon: mdi:timer-outline
+        grid_options: {columns: 6, rows: 1}
+
+      # Spells out the arithmetic the supervisor is doing (target x fattore) so
+      # the halved target is never a surprise, and names the 24 h cut-off.
+      # The unavailable branch is the point of the whole card: it says OUT LOUD
+      # that a missing reading makes every cover rule inert rather than
+      # defaulting to "closed".
+      - type: markdown
+        grid_options: {columns: full, rows: auto}
+        content: "{% set chiuso = is_state('binary_sensor.pool_telo_chiuso','on') %}{% set grezzo = states('binary_sensor.shelly_blu_door_window_480b_window') %}{% if grezzo in ['unavailable','unknown'] %}⚠️ **Sensore telo non raggiungibile.** `binary_sensor.pool_telo_chiuso` diventa `unavailable` di proposito, non `on`: senza lettura tutte le regole telo tornano inerti — il target cloro NON viene dimezzato e il taglio a 24 h non scatta. Un buco di lettura non è una prova.{% else %}**Telo {{ 'CHIUSO' if chiuso else 'APERTO' }}**{{ ' · da ' ~ states('sensor.pool_poolbrain_cover_closed_for') ~ ' h' if chiuso else '' }}\n\nTarget cloro oggi: **{{ (states('number.pool_poolbrain_target_chlorine_hours') | float(0) * (states('number.pool_poolbrain_cover_chlorine_factor') | float(1) if chiuso else 1)) | round(1) }} h** — {{ states('number.pool_poolbrain_target_chlorine_hours') ~ ' h × ' ~ states('number.pool_poolbrain_cover_chlorine_factor') ~ ' (telo chiuso)' if chiuso else 'pieno, telo aperto' }} · mancano **{{ states('sensor.pool_poolbrain_chlorine_hours_missing') }} h**\n\nOltre **24 h** di telo chiuso il clorinatore si spegne del tutto (§5.5, rung 3).{% endif %}\n\n---\n\nIl sensore grezzo è `device_class: window`, quindi **`on` = APERTO**: `binary_sensor.pool_telo_chiuso` lo inverte e ci aggiunge la disponibilità. Non puntare mai l'options flow di `villa_pool` direttamente sul sensore Shelly — dimezzerebbe il cloro a vasca **scoperta**."
+
+      # Duplicated from "PoolBrain — settaggi" on purpose: this is the knob the
+      # markdown above just explained, and 0.8 is a starting point to walk down
+      # against measured FAC, not an answer.
+      - type: tile
+        entity: number.pool_poolbrain_cover_chlorine_factor
+        name: Fattore cloro con telo
+        icon: mdi:tent
+        features: [{type: numeric-input, style: buttons}]
+        features_position: bottom
+        grid_options: {columns: 12, rows: 2}
+
+      - type: heading
+        heading: Sensore — salute
+        heading_style: subtitle
+        icon: mdi:bluetooth
+
+      - type: tile
+        entity: binary_sensor.shelly_blu_door_window_480b_window
+        name: Grezzo (on = APERTO)
+        icon: mdi:window-closed-variant
+        grid_options: {columns: 6, rows: 1}
+
+      - type: tile
+        entity: sensor.shelly_blu_door_window_480b_battery
+        name: Batteria
+        icon: mdi:battery
+        grid_options: {columns: 6, rows: 1}
+
+      # Registered disabled by default by BTHome; enabled by hand on 22/9.
+      # It is the number that says whether this BLE link can be trusted to
+      # drive a 24 h integrator — below about -90 dBm it cannot.
+      - type: tile
+        entity: sensor.shelly_blu_door_window_480b_signal_strength
+        name: Segnale BLE
+        icon: mdi:bluetooth-audio
+        grid_options: {columns: 6, rows: 1}
+
+      - type: tile
+        entity: sensor.shelly_blu_door_window_480b_illuminance
+        name: Luce (diagnostica)
+        icon: mdi:brightness-5
+        grid_options: {columns: 6, rows: 1}
+
+      # 7 days, not 24 h: the cover moves a handful of times a day at most, and
+      # what you want to see is whether the chlorine enable tracks it.
+      - type: history-graph
+        title: Telo vs cloro abilitato (7 giorni)
+        hours_to_show: 168
+        grid_options: {columns: full, rows: 3}
+        entities:
+          - {entity: binary_sensor.pool_telo_chiuso, name: Telo chiuso}
+          - {entity: switch.clorinatore, name: Cloro abilitato}
+
+# ---------------------------------------------------------------------------
+# THE INVERSE — one op, because one whole section was added.
+# Take a fresh config_hash first; index 9 is only valid while no other section
+# has been inserted before it. The `test` is what catches that.
+# ---------------------------------------------------------------------------
+#
+#   - {op: test,   path: /views/0/sections/9/cards/0/heading, value: "6 · Telo — Shelly BLU Door/Window"}
+#   - {op: remove, path: /views/0/sections/9}
+#
+# Removing the section does NOT undo the rest of the change: the options-flow
+# `cover_closed` pick, `binary_sensor.pool_telo_chiuso` and the 0.8 factor all
+# live outside the dashboard. See NEXT_SESSION.md, "The cover sensor lands".

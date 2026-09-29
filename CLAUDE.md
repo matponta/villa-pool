@@ -218,6 +218,64 @@ settled after 16 min of flow (EC settled in 90 s and held), and ORP read
 OFF until a long run says pH and ORP plateau. EC agreed to 3.4 %, so the
 salinity channel is trustworthy today.
 
+### The cover sensor, and why it is inverted (2026-09-22)
+
+The §1 cover sensor finally exists: a **Shelly BLU Door/Window**
+(`38:39:8F:B1:48:0B`, device `Pool Cover`, area `pool`), reaching HA as
+**BTHome over the Everything-Presence-One BLE proxies** — the same path the
+house's other BLU sensors use, not a Shelly BLU gateway. Its raw entities are
+`binary_sensor.shelly_blu_door_window_480b_window` + the usual battery /
+illuminance / rotation / signal-strength set.
+
+**The raw entity is inverted, and wiring it straight in would be silently
+wrong.** It carries `device_class: window`, so in HA `on` = OPEN — while
+`coordinator.onoff(CONF_COVER_CLOSED)` reads `on` as `cover_closed=True`. Point
+the options flow at it directly and the pool halves its chlorine target exactly
+when the cover is OFF and UV is eating the free chlorine, then cuts the cell
+after 24 h of open sun. Nothing logs an error; the reason line looks normal.
+
+So `cover_closed` points at a **template helper**, `binary_sensor.pool_telo_chiuso`
+(HA config entry `01M33194SS4294YYG9MDSZKEDV`) — which is also the id STORY §1
+and §4 name, and the one the Chiudi Casa alert will reference:
+
+```jinja
+state:        {{ is_state('binary_sensor.shelly_blu_door_window_480b_window', 'off') }}
+availability: {{ has_value('binary_sensor.shelly_blu_door_window_480b_window') }}
+```
+
+**The availability template is load-bearing, not decoration.** A bare
+`not is_state(...)` renders truthy when the source is missing, i.e. "cover
+closed" on a dead sensor. With `has_value()` the helper goes `unavailable`,
+`_cover_closed_for_h` returns `None`, `coordinator.onoff` yields `None`, and
+every cover rule goes inert — the PdC's "a read gap is not evidence", applied to
+the cover. The direction matters for `session.py` too: a wrong `cover_closed`
+is recorded against every heating session, i.e. into the data the COP model is
+meant to be *fitted* from, where a wrong point is worse than no point because
+it would be believed.
+
+**The factor is 0.8, not the shipped 0.5** (owner, 2026-09-22). The 2026-09-21
+measurement is the reason: the cell ran 6.69 h against a 6.0 h target —
+`chlorine_hours_missing` 0, the day "done" — and the reference measured FAC
+1.2 ppm, under §9's 1.5-2. The hours law was already running lean at the FULL
+target, and 0.5 had never been validated against this pool. Start high and walk
+it down against measured FAC, not the other way round.
+
+Two things that are still open, and both are cheap to close:
+
+- **The polarity has been observed in ONE position only.** Cover physically
+  shut ↔ raw `off` ↔ helper `on`, confirmed 2026-09-22 00:28. The sensor has
+  never been seen to change state. A reed has exactly two positions so the
+  inference is sound, but the first opening is the check — if the helper does
+  not go `off`, the inversion is backwards.
+- **The first 24 h window is fake.** `_cover_closed_for_h` reads the helper's
+  own `last_changed`, which is when the helper was CREATED, not when the cover
+  shut. The first `cover closed > 24 h` cutoff is therefore measured from
+  midnight on 22/9. It self-corrects at the first opening.
+
+Image detection from `camera.g6_bbq_high_resolution_channel` was explored on
+2026-09-21/22 and **dropped** in favour of the physical sensor alone (owner,
+2026-09-22) — see STORY §3.
+
 ### The heating-session log (§5.4)
 
 `supervisor/session.py` brackets each heating run and records what it cost, so
@@ -295,7 +353,8 @@ law decides → engine reports. No module skips a step.
   `villa_hvac`, which hard-codes its KNX map, the pool's entities come from
   tuya-local, Shelly, Ecowitt and an aquatemp fork, all of which rename things
   across updates — a renamed probe must be a two-click fix, not a release. The
-  cover picker is the one with **no default** (§1: "ask, don't guess").
+  cover picker is the one with **no default** (§1: "ask, don't guess") — and
+  since 2026-09-22 it is finally filled, with `binary_sensor.pool_telo_chiuso`.
 - `coordinator.py` — 60 s read-only poll of every configured input. Its one
   piece of judgement: `unavailable`/`unknown` becomes `None`, **never** `False`
   or `0`. Also integrates `volume_flow_rate` into today's m³.
@@ -390,6 +449,10 @@ the same situation restarting the machine when the anchor is dropped.
 - **F2 is never a NIGHT grid-heating band** (§3, narrowed by the 2026-09-18
   amendment — §5.4's daytime top-up ignores the band). Reason on *bands*, never
   on prices — the PUN index changes monthly.
+- **Never point `cover_closed` at the Shelly BLU entity directly.** It is
+  `device_class: window`, so `on` means OPEN, while `coordinator.onoff` reads
+  `on` as closed. The options flow points at `binary_sensor.pool_telo_chiuso`,
+  the template helper that inverts it AND carries an availability template.
 - **Do not turn the pump off on unload.** Release nothing destructive; just stop
   deciding (§6). Pinned by `test_unload_releases_nothing_destructive`.
 - **Do not test writes with `async_mock_service` for `switch`/`number`/
@@ -511,10 +574,11 @@ future re-deploy.
 
 ## Before the next step
 
-- **The cover sensor entity id is still unknown.** `binary_sensor.pool_telo_chiuso`
-  is a placeholder; the owner installs the sensor 20-21/9. Ask for the real id,
-  set it in the options flow, then wire the §1 `pool_allerta_telo_aperto_chiudi_casa`
-  alert. Until then every cover rule is inert by construction.
+- ~~**The cover sensor entity id is still unknown.**~~ **RESOLVED 2026-09-22** —
+  see *The cover sensor, and why it is inverted* above. Still owed: the §1
+  `automation.pool_allerta_telo_aperto_chiudi_casa` alert, which was blocked on
+  this id and is now writable; and one observation of the sensor actually
+  CHANGING state, because the polarity has only ever been seen in one position.
 - Check `automation.pool_test_cop_notturno` is disabled before any actuating
   release — the integration must not fight a running one-shot (§6).
 - **§9's "flow at 30 %" is now load-bearing.** `binary_sensor.pool_pompa_in_marcia`
