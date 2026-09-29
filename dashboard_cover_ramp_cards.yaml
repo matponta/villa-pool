@@ -1,0 +1,59 @@
+# Cards changed on `pool-overview-v2` for v0.9.0, the cover ramp (2026-09-29).
+#
+# Applied live with ha_config_set_dashboard(patch=...) against a fresh
+# config_hash, guarded by `test` ops on every card touched. That dashboard is
+# storage-mode and hand-built by the owner: it is NEVER replaced wholesale.
+#
+#   config_hash before: fdf9fc06c43d93b2
+#   config_hash after:  09952f6ce2367111
+#
+# v0.9.0 retired number.pool_poolbrain_cover_chlorine_factor, which two tiles
+# used, and the markdown in "6 · Telo" explained the old rule (target × factor,
+# "oltre 24 h il clorinatore si spegne"). IDs are the LIVE ones (*_poolbrain_*).
+#
+# 1. Section 10 (PoolBrain — settaggi), card 15: the factor tile (columns 6)
+#    REPLACED by the min-hours tile; the ramp-days tile ADDED at 16. Every card
+#    after it moved by one (the last-session markdown went 36 -> 37).
+# 2. Section 9 (6 · Telo), card 4: the factor tile (columns 12) REPLACED by the
+#    min-hours tile (columns 6); the ramp-days tile ADDED at 5 (columns 6), so
+#    the pair fills the same row. The history-graph moved 10 -> 11.
+# 3. Section 9, card 3 (markdown): `content` REPLACED. It now reads the ramp
+#    from sensor.pool_poolbrain_cover_closed_for's attributes (cover_day,
+#    chlorine_target_h, last_seen_open, lower_bound) rather than recomputing
+#    it, and computes "mancano" as target - runtime, because the law's target
+#    includes the ORP extension and sensor.*_chlorine_hours_missing does not.
+#    Rendered live at 14:35: "Telo CHIUSO · ultima apertura vista 22/09 09:20
+#    (almeno: nessuna apertura nello storico) · giorno 7 | Target cloro oggi:
+#    2.0 h — scala 8.0 → 2.0 h in 3 giorni, al minimo".
+#
+# The tiles added:
+tile_min_hours:
+  type: tile
+  entity: number.pool_poolbrain_cover_min_chlorine_hours
+  name: Cloro minimo con telo
+  icon: mdi:tent
+  features: [{type: numeric-input, style: buttons}]
+  features_position: bottom
+  grid_options: {columns: 6, rows: 2}
+tile_ramp_days:
+  type: tile
+  entity: number.pool_poolbrain_cover_ramp_days
+  name: Giorni di discesa con telo
+  icon: mdi:stairs-down
+  features: [{type: numeric-input, style: buttons}]
+  features_position: bottom
+  grid_options: {columns: 6, rows: 2}
+#
+# INVERSE (to undo, against a fresh config_hash, highest index first):
+#   remove /views/0/sections/10/cards/16
+#   replace /views/0/sections/10/cards/15 with the old factor tile (columns 6)
+#   remove /views/0/sections/9/cards/5
+#   replace /views/0/sections/9/cards/4 with the old factor tile (columns 12)
+#   replace /views/0/sections/9/cards/3/content with the v0.8.0 text
+# The old factor tile:
+#   {type: tile, entity: number.pool_poolbrain_cover_chlorine_factor,
+#    name: Fattore cloro con telo, icon: mdi:tent,
+#    features: [{type: numeric-input, style: buttons}],
+#    features_position: bottom, grid_options: {columns: 12|6, rows: 2}}
+# Undoing it is only meaningful together with a downgrade to v0.8.0: the entity
+# no longer exists in v0.9.0.

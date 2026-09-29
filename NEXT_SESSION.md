@@ -45,7 +45,26 @@ discovering it during a reinstall.
 
 ---
 
-## v0.9.0 — the cover ramp (§5.3, owner amendment 2026-09-29) — NOT YET DEPLOYED
+## v0.9.0 — the cover ramp (§5.3, owner amendment 2026-09-29) — DEPLOYED 2026-09-29 14:31
+
+### Live-verify result (2026-09-29, first tick 14:32:55)
+
+- Installed via HACS (release v0.9.0), HA restarted 14:31. No `villa_pool`
+  errors in the log. CI green after one hassfest fix (manifest key order).
+- `number.pool_poolbrain_cover_min_chlorine_hours` = 2.0,
+  `number.pool_poolbrain_cover_ramp_days` = 3 — the new entities, live ids.
+- The reason line at the first tick: `chlorine ON — chlorine window, 2.0 h to
+  target [cover floor: target 2.0 h]`, `cover_day: 7`, and
+  **`switch.clorinatore` went ON at 14:32:55** — the first chlorine since 27/9.
+- `sensor.pool_poolbrain_cover_closed_for` = 173.2 h, `last_seen_open`
+  22/09 09:20, **`lower_bound: true`**: the recorder holds no opening at all,
+  so it is "closed at least since the oldest record". The owner confirmed on
+  29/9 that the cover really has been shut since then (travelling). The
+  polarity check is therefore still owed at the first real opening.
+- `pool-overview-v2` updated: see `dashboard_cover_ramp_cards.yaml`.
+- **Still to do:** `number.pool_poolbrain_cover_chlorine_factor` is an orphan
+  in the entity registry (no state, nothing references it) — delete it once
+  the owner OKs it.
 
 ### Why
 
@@ -109,9 +128,8 @@ with the water at 27-28 °C. Owner: "il cloro a 0 col telo chiuso non va bene".
    `number.pool_poolbrain_cover_ramp_days` (live device name, see above).
 4. Replace the `cover_chlorine_factor` card on `pool-overview-v2`, record it in
    a `dashboard_*_cards.yaml`, delete the orphaned entity.
-5. **Owner question still open:** has the cover really not been opened once
-   since 22/9? If it has, the sensor/helper is not reporting openings and the
-   ramp is sitting on the floor for the wrong reason.
+5. ~~Owner question: has the cover really not been opened once since 22/9?~~
+   **Answered 29/9: yes, shut since then (owner travelling).**
 
 ---
 
