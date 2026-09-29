@@ -67,14 +67,16 @@ All verified live after creation.
   Sat F3 00–07 · F2 07–23 · F3 23–24; Sun/holidays F3. Verified `F1` at
   Thu 08:52.
 
-NOT done (waits for the cover sensor, owner installs 20–21/9):
+STILL NOT done — but no longer blocked (the cover sensor landed 2026-09-22):
 - `automation.pool_allerta_telo_aperto_chiudi_casa` — trigger
   `input_button.chiudi_notte` pressed; condition `binary_sensor.pool_telo_chiuso`
   not `on`; action push `notify.mobile_app_matphone16`, `data.entity_id:
   camera.g6_bbq_high_resolution_channel` (iOS camera attachment),
   `push.interruption-level: time-sensitive`; repeat once after 20 min if still
-  open; distinct message when the sensor is `unavailable`. Final entity id
-  unknown at brief time: **ask, don't guess**.
+  open; distinct message when the sensor is `unavailable`. ~~Final entity id
+  unknown at brief time: **ask, don't guess**.~~ **The id is now known** —
+  `binary_sensor.pool_telo_chiuso`, the template helper described in §2. The
+  automation itself has still not been written.
 
 The integration consumes `pool_pompa_in_marcia`, `fascia_oraria` and
 `pool_telo_chiuso` as inputs; it does not re-implement them.
@@ -115,7 +117,7 @@ Inputs the integration reads (all exist unless marked):
 | Solar headroom | `sensor.solar_headroom_for_heater` | W = PV (`sensor.panel_production_power`, kW) − house (`sensor.shelly_consumo_casa_power`) − pool excluding heater. **Already excludes the PdC**, so it does not collapse when the PdC starts. PV part is Fusion Solar cloud, ~5 min. |
 | Grid power | `sensor.energy_grid_grid_consumption_power_grid_injection_power_net_power` | W, positive = import (Fusion Solar Casa). Diagnostics only. |
 | Tariff band | `sensor.fascia_oraria` | Phase 0, live (`F1`/`F2`/`F3`). |
-| Cover closed | `binary_sensor.pool_telo_chiuso` | Owner installs 20–21/9. Id TBD. |
+| Cover closed | `binary_sensor.pool_telo_chiuso` | **Live 2026-09-22.** A template helper, not the device: it inverts `binary_sensor.shelly_blu_door_window_480b_window` (Shelly BLU Door/Window, device `Pool Cover`, BTHome over the EP1 BLE proxies) and carries an availability template. The raw entity is `device_class: window`, so `on` = **open** — wiring it straight into the options flow would invert every cover rule. |
 | Bathing override | `input_boolean.pool_in_use` | Exists, on the dashboard. Keep as input. |
 | Night routine | `input_button.chiudi_notte` | "Chiudi Casa". |
 | Notify | `notify.mobile_app_matphone16` | iOS. |
@@ -137,7 +139,7 @@ alert automations (`pool_allerta_*`) — they are the owner's independent watchd
 | COP | Measured 2.82 (night, ~18 °C air, 95 Hz). Model COP vs outdoor air per §5.4; use it for estimates, log sessions to calibrate. |
 | Filtration speed | 80 % for now (bypass calibrated at 80 %, ΔT 2 K; chlorinator flow-switch minimum unknown). Step-down test later. |
 | Winter mode | Pump ≥ 2 h/day from 12:00 at 80 % with chlorine enabled; PdC off. **Antifreeze**: outdoor < 0 °C → pump continuous at `antifreeze_speed` (default 30 %, **tunable 30–80**), chlorinator OFF, release at ≥ +2 °C. *(Amended 2026-09-17: antifreeze also runs in `manual`/`closed` — see §5.5.)* |
-| Cover | Physical sensor is primary. Image detection (AI Task) postponed. Alert at Chiudi Casa if open. |
+| Cover | Physical sensor is primary. Image detection (AI Task) postponed. Alert at Chiudi Casa if open. *(Amended 2026-09-22: the physical sensor is live — see §2 — and image detection is **dropped**, not merely postponed. Two findings killed it: UniFi Protect's own detections are event-shaped with a fixed class list that has no "cover" in it, and an LLM check needs a vision provider this HA does not have. The owner also set `cover_chlorine_factor` to **0.8** rather than the shipped 0.5, because the 21/9 FAC measurement — 6.69 h run, target met, FAC 1.2 ppm against §9's 1.5–2 — showed the hours law already running lean at the FULL target. Walk it down against measured FAC.)* *(Amended 2026-09-29: the factor and the 24 h cut-off are both **gone** — replaced by the cover ramp, §5.3.)* |
 | Pool volume | 90 m³ for turnover math (documents say 67–81; 90 is the conservative side). |
 
 ## 4. Entities the integration exposes
@@ -147,7 +149,9 @@ overridable). Suggested set:
 
 **Settings (`number.*`)**: `pool_target_turnovers` (0.5–2, default 1.0) ·
 `pool_target_chlorine_hours` (0–12, default 8) · `pool_winter_chlorine_hours`
-(default 2) · `pool_cover_chlorine_factor` (0.1–1, default 0.5) ·
+(default 2) · ~~`pool_cover_chlorine_factor` (0.1–1, default 0.5)~~ *(replaced
+2026-09-29 by `pool_cover_min_chlorine_hours` (0–12, default 2) and
+`pool_cover_ramp_days` (0–7, default 3) — §5.3)* ·
 `pool_solar_target_temp` (default 28.0) · `pool_min_temp` (default 27.0) ·
 `pool_solar_on_w` (3000) · `pool_solar_off_w` (2500) · `pool_filtration_speed`
 (30–120, default 80) · `pool_pdc_speed` (default 80) · `pool_antifreeze_speed`
@@ -228,6 +232,32 @@ Catch-up: at `pool_deadline`, if hours are missing, keep pump + chlorine on unti
 target or midnight. Measure only `salt_chlorinator_runtime_today`; the switch
 state is not evidence of production.
 
+**AMENDMENT 2026-09-29 (owner), shipped in v0.9.0 — the cover RAMPS the target,
+it never cuts the cell.** The 24 h rule above ran the pool at **zero** hours from
+27/9 to 29/9 under a closed cover, with the PdC holding the water at 27–28 °C —
+where free chlorine goes fastest. A cover cuts UV loss, not all loss. The owner:
+"il cloro a 0 col telo chiuso non va bene". Now:
+
+- `target_effective` with the cover closed is a straight line from
+  `target_chlorine_hours` on the day it closed (day 0) to
+  `cover_min_chlorine_hours` (default **2 h**) after `cover_ramp_days` (default
+  **3**) calendar days, flat after it: 8 → 6 → 4 → 2. **Both ends are
+  settings and the steps are computed from them**, so moving either keeps the
+  ramp proportional (owner's explicit ask). A floor above the target reads as
+  the target; the cover never raises the demand.
+- Days are **calendar** days, stepping at midnight with the chlorinator's own
+  counter, so a target never moves under the day it is counted against.
+- "Closed for" is measured from **the last time the cover was seen OPEN in the
+  recorder**, not from the helper's `last_changed` (owner's ask). A restart
+  reset `last_changed` on 25/9 15:49 while the cover had been shut since 22/9,
+  and any `unavailable` blip would do the same. An `unavailable` gap holds the
+  last reading for 1 h; past that the cover is unknown and the full target
+  applies.
+- The ORP extension (§9) is added on top of the ramp, so the floor is a floor,
+  not a ceiling.
+- `cover_chlorine_factor` is retired — day 0 IS the full target — and
+  `pool_in_use` is no longer overruled by the cover.
+
 ### 5.4 COP model — outdoor temperature matters (owner ask 2026-09-17)
 
 The PdC is air-source: its COP falls with air temperature. The only measured
@@ -303,8 +333,9 @@ deadline logic then reads: "reach min_temp by 19:00 in F1; if not, resume at
 
 ### 5.5 Priority ladder (first match wins)
 
-1 maintenance/manual → 2 fault or pump not in marcia → 3 cover closed > 24 h
-(chlorine OFF, even with pool_in_use) → 4 antifreeze → 5 pool_in_use → 6 SOLAR →
+1 maintenance/manual → 2 fault or pump not in marcia → 3 ~~cover closed > 24 h
+(chlorine OFF, even with pool_in_use)~~ *(retired 2026-09-29: the cover now
+only moves the rung-8 target, §5.3)* → 4 antifreeze → 5 pool_in_use → 6 SOLAR →
 7 GRID → 8 targets/catch-up → 9 pump window.
 
 **AMENDMENT 2026-09-17 (owner), shipped in v0.4.0 — antifreeze outranks `manual`
@@ -365,7 +396,11 @@ expires by itself after 4 h, where `closed` lasts months.
    midday in F2 now heats, and that is pinned too, in `TestDaytimeGridTopUp`.
 5. Pump reported `problem` while PdC in SOLAR → PdC `off` within one tick,
    chlorine off, notification, state BLOCKED with reason.
-6. Cover closed 25 h → chlorine off even with pool_in_use; reopen → resumes.
+6. ~~Cover closed 25 h → chlorine off even with pool_in_use; reopen → resumes.~~
+   *Amended 2026-09-29:* cover closed → target steps from
+   `target_chlorine_hours` to `cover_min_chlorine_hours` over `cover_ramp_days`
+   calendar days since last seen open, never below the floor; reopen → full
+   target. Pinned by `TestCriterion06CoverRamp` and `tests/test_cover.py`.
 7. Winter mode, outdoor −1 °C at 03:00 → pump ON at antifreeze_speed, chlorine
    off; outdoor +2.5 → pump off (unless winter 12:00 slot).
 8. `hours_today` 5 at 19:00 with target 8 → pump + chlorine stay on; at 8 h → off.

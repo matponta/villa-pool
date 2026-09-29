@@ -24,10 +24,12 @@ from .actuation import (
 from .chlorine import (
     catchup_active,
     chlorine_decision,
-    cover_cutoff,
+    cover_day,
+    cover_target_hours,
     hours_missing,
     target_hours,
 )
+from .cover import CoverTracker
 from .cop import band_price, cop_estimate, solar_share, thermal_cost
 from .law import decide, restore_memory
 from .model import Decision, Memory, PoolConfig, PoolState, Windows
@@ -75,7 +77,9 @@ __all__ = [
     "chlorine_decision",
     "confirm_step",
     "cop_estimate",
-    "cover_cutoff",
+    "CoverTracker",
+    "cover_day",
+    "cover_target_hours",
     "decide",
     "flushed_for_s",
     "grid_conditions",

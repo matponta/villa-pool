@@ -1,6 +1,9 @@
 {
   "domain": "villa_pool",
   "name": "Villa Pool",
+  "after_dependencies": [
+    "recorder"
+  ],
   "codeowners": [
     "@matponta"
   ],
@@ -11,5 +14,5 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/matponta/villa-pool/issues",
   "requirements": [],
-  "version": "0.8.0"
+  "version": "0.9.0"
 }

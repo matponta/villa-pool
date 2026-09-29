@@ -26,7 +26,8 @@ from .const import (
     DEFAULT_ANTIFREEZE_OFF_C,
     DEFAULT_ANTIFREEZE_ON_C,
     DEFAULT_ANTIFREEZE_SPEED,
-    DEFAULT_COVER_CHLORINE_FACTOR,
+    DEFAULT_COVER_MIN_CHLORINE_HOURS,
+    DEFAULT_COVER_RAMP_DAYS,
     DEFAULT_FILTRATION_SPEED,
     DEFAULT_MIN_TEMP,
     DEFAULT_ORP_MAX_EXTRA_HOURS,
@@ -74,9 +75,15 @@ SETTINGS: tuple[Setting, ...] = (
             DEFAULT_TARGET_CHLORINE_HOURS, 0, 12, 0.5, "h", "mdi:test-tube"),
     Setting("winter_chlorine_hours", "Winter chlorine hours",
             DEFAULT_WINTER_CHLORINE_HOURS, 0, 12, 0.5, "h", "mdi:snowflake"),
-    Setting("cover_chlorine_factor", "Cover chlorine factor",
-            DEFAULT_COVER_CHLORINE_FACTOR, 0.1, 1.0, 0.05, None,
+    # The cover ramp (§5.3, amendment 2026-09-29): with the cover shut the
+    # target steps from `target_chlorine_hours` down to this floor over
+    # `cover_ramp_days` calendar days. Replaces `cover_chlorine_factor` and
+    # the 24 h cut-off, which ran the pool at zero.
+    Setting("cover_min_chlorine_hours", "Cover min chlorine hours",
+            DEFAULT_COVER_MIN_CHLORINE_HOURS, 0, 12, 0.5, "h",
             "mdi:sun-snowflake-variant"),
+    Setting("cover_ramp_days", "Cover ramp days", DEFAULT_COVER_RAMP_DAYS,
+            0, 7, 1, "d", "mdi:stairs-down"),
     Setting("winter_hours", "Winter hours", DEFAULT_WINTER_HOURS,
             0, 12, 0.5, "h", "mdi:pump"),
     # --- temperatures --------------------------------------------------------

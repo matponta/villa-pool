@@ -112,9 +112,9 @@ DEFAULT_GRID_POWER: Final = (
 DEFAULT_TARIFF_BAND: Final = "sensor.fascia_oraria"
 DEFAULT_POOL_IN_USE: Final = "input_boolean.pool_in_use"
 DEFAULT_NOTIFY_TARGET: Final = "notify.mobile_app_matphone16"
-# The cover sensor does NOT exist yet (owner installs 20-21/9, id TBD — STORY
-# §1/§2: "ask, don't guess"). Its picker is optional and defaults to empty; the
-# cover rules stay inert until the owner supplies the real entity id.
+# No default, on purpose (STORY §1/§2: "ask, don't guess"). Since 2026-09-22
+# the options flow points at `binary_sensor.pool_telo_chiuso`, the template
+# helper that inverts the Shelly BLU window sensor — never at the raw entity.
 DEFAULT_COVER_CLOSED: Final = ""
 
 
@@ -150,7 +150,6 @@ DEFAULT_ANTIFREEZE_OFF_C: Final = 2.0
 DEFAULT_TARGET_TURNOVERS: Final = 1.0
 DEFAULT_TARGET_CHLORINE_HOURS: Final = 8.0
 DEFAULT_WINTER_CHLORINE_HOURS: Final = 2.0
-DEFAULT_COVER_CHLORINE_FACTOR: Final = 0.5
 DEFAULT_WINTER_HOURS: Final = 2.0
 # Conservative side of the documented 67-81 m3 range (§3); turnovers = m3 / this.
 POOL_VOLUME_M3: Final = 90.0
@@ -194,8 +193,26 @@ SOLAR_OFF_DWELL_S: Final = 900          # 15 min
 # "no new information", never as a state change, and judge nothing about the
 # machine for this long after a command (§5.2 — T02 lagged ~1 h once).
 PDC_STALE_GRACE_S: Final = 900          # 15 min
-# Chlorine is cut off if the cover has been closed longer than this (§5.3).
-COVER_CLOSED_CHLORINE_CUTOFF_H: Final = 24.0
+# --- The cover ramp (§5.3, owner amendment 2026-09-29) ------------------------
+# A closed cover no longer cuts the cell. The chlorine target steps down, one
+# step per calendar day the cover has stayed shut, from the full
+# `target_chlorine_hours` on the day it closed to this floor — and never below
+# it. It replaces both the old 24 h cut-off (which ran the pool at zero for
+# days: 27-29/9) and the flat `cover_chlorine_factor`. The floor is where the
+# ORP trim, when it is on, extends from.
+DEFAULT_COVER_MIN_CHLORINE_HOURS: Final = 2.0
+DEFAULT_COVER_RAMP_DAYS: Final = 3
+# How long the last KNOWN cover reading still counts through an `unavailable`
+# gap. A BLE sensor dropping out for a few minutes is not the cover opening,
+# and must not throw the pool back to the full target; a sensor dead for longer
+# than this is genuinely unknown, and the cover rules go inert (full target).
+COVER_GAP_GRACE_S: Final = 3600
+# How far back the recorder is searched, at startup, for the last time the
+# cover was seen OPEN. This — not the helper's `last_changed`, which a restart
+# resets (seen live: 25/9 15:49) — is what "closed for N days" is measured
+# from. Anything past the ramp only has to prove "at least N days", so the
+# recorder's default 10-day retention is plenty.
+COVER_HISTORY_DAYS: Final = 10
 # switch.pool_maintenance freezes all actuation and auto-releases after this.
 MAINTENANCE_AUTO_OFF_S: Final = 4 * 3600
 

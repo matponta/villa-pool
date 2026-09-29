@@ -8,9 +8,14 @@ can be replayed offline against the logs.
 Priority ladder (STORY §5.5, first match wins) — this is the order the *reason*
 is chosen in, and the order the interlocks are applied in:
 
-    1 maintenance/manual  2 fault or pump not in marcia  3 cover closed > 24 h
+    1 maintenance/manual  2 fault or pump not in marcia  3 (retired)
     4 antifreeze  5 pool_in_use  6 SOLAR  7 GRID  8 targets/catch-up
     9 pump window
+
+Rung 3 was "cover closed > 24 h -> chlorine off". The 2026-09-29 amendment
+turned it into the cover RAMP, which is not an interlock at all: it only moves
+the rung-8 target (`chlorine.cover_target_hours`). The number is kept so the
+rungs still match STORY §5.5.
 """
 from __future__ import annotations
 
@@ -33,7 +38,13 @@ from ..const import (
     POSTRUN_S,
     PUMP_CONFIRM_S,
 )
-from .chlorine import catchup_active, chlorine_decision, cover_cutoff, hours_missing
+from .chlorine import (
+    catchup_active,
+    chlorine_decision,
+    cover_day,
+    hours_missing,
+    target_hours,
+)
 from .model import Decision, Memory, PoolState
 from .pdc import RUNNING_STATES, grid_conditions, pdc_step, solar_conditions
 from .pump import (
@@ -196,7 +207,7 @@ def decide(state: PoolState, mem: Memory) -> tuple[Decision, Memory]:
     # antifreeze hand-back is complete.
     mem = replace(mem, antifreeze_owns_pump=False)
 
-    # --- chlorine (rungs 3, 4, 5, 8) -----------------------------------------
+    # --- chlorine (rungs 4, 5, 8) --------------------------------------------
     # The pump follows demand, so the chlorinator's *demand* has to be known
     # before the pump is sized: ask what it would want with flow available,
     # then decide what it actually gets once the speed is known.
@@ -240,6 +251,7 @@ def decide(state: PoolState, mem: Memory) -> tuple[Decision, Memory]:
         chlorine_on=chlorine_on, chlorine_reason=chlorine_reason,
         antifreeze=antifreeze, pump_confirmed=pump_confirmed,
         orp_note=_orp_note(trim),
+        cover_note=_cover_note(state, trim.hours),
     )
 
     return (
@@ -264,7 +276,8 @@ def decide(state: PoolState, mem: Memory) -> tuple[Decision, Memory]:
                 "antifreeze": antifreeze,
                 "chlorine_hours_missing": round(hours_missing(state, trim.hours), 2),
                 "catchup": catchup,
-                "cover_cutoff": cover_cutoff(state),
+                "chlorine_target_h": round(target_hours(state, trim.hours), 2),
+                "cover_day": cover_day(state),
                 # --- water chemistry (§5.3, §9) --------------------------
                 "orp_trim_h": trim.hours,
                 "orp_reason": trim.reason,
@@ -309,9 +322,25 @@ def _orp_note(trim) -> str | None:
     return None
 
 
+def _cover_note(state: PoolState, trim_h: float) -> str | None:
+    """The cover-ramp fragment for the reason line, or None with it open.
+
+    Always shown while the cover is shut, unlike the ORP note: it is the
+    reason today's target is not the number on the settings card, and a
+    target that quietly moves is exactly what the owner would otherwise have
+    to reverse-engineer.
+    """
+    day = cover_day(state)
+    if day is None or state.mode == MODE_WINTER:
+        return None
+    ramp = max(0, int(state.config.cover_ramp_days))
+    stage = f"day {day}" if day < ramp else "floor"
+    return f"cover {stage}: target {target_hours(state, trim_h):.1f} h"
+
+
 def _reason_line(*, state, mem, pdc_state, pdc_reason, pump_on, pump_speed,
                  requesters, chlorine_on, chlorine_reason, antifreeze,
-                 pump_confirmed, orp_note=None) -> str:
+                 pump_confirmed, orp_note=None, cover_note=None) -> str:
     """One line the owner reads first when something looks wrong (STORY §4).
 
     Deliberately flat and boring: actuator, what it is doing, why. No jargon
@@ -328,6 +357,8 @@ def _reason_line(*, state, mem, pdc_state, pdc_reason, pump_on, pump_speed,
     else:
         pdc_txt = f"PdC {pdc_state} — {pdc_reason}"
     cl_txt = f"chlorine {'ON' if chlorine_on else 'OFF'} — {chlorine_reason}"
+    if cover_note:
+        cl_txt = f"{cl_txt} [{cover_note}]"
     if orp_note:
         cl_txt = f"{cl_txt} [{orp_note}]"
     prefix = "ANTIFREEZE: " if antifreeze else ""

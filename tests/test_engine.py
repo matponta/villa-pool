@@ -48,7 +48,8 @@ TICK = timedelta(seconds=60)
 
 
 async def setup_pool(
-    hass: HomeAssistant, *, pdc_temperature: float | None = 29.0, **states
+    hass: HomeAssistant, *, pdc_temperature: float | None = 29.0,
+    data: dict | None = None, **states
 ) -> MockConfigEntry:
     """Seed the input entities, then load the integration.
 
@@ -93,7 +94,9 @@ async def setup_pool(
             {"temperature": pdc_temperature},
         )
 
-    entry = MockConfigEntry(domain=DOMAIN, data=ENTRY_DATA, unique_id=DOMAIN)
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={**ENTRY_DATA, **(data or {})}, unique_id=DOMAIN
+    )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
@@ -1314,7 +1317,9 @@ async def test_story_section_4_entity_ids(hass: HomeAssistant) -> None:
         "number.pool_target_turnovers",
         "number.pool_target_chlorine_hours",
         "number.pool_winter_chlorine_hours",
-        "number.pool_cover_chlorine_factor",
+        # the cover ramp (v0.9.0) -- replaced number.pool_cover_chlorine_factor
+        "number.pool_cover_min_chlorine_hours",
+        "number.pool_cover_ramp_days",
         "number.pool_solar_target_temp",
         "number.pool_min_temp",
         "number.pool_solar_on_w",

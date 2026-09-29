@@ -25,7 +25,6 @@ from .const import (
     CONF_CHLORINATOR_HOURS,
     CONF_CHLORINATOR_RUNNING,
     CONF_CHLORINATOR_SWITCH,
-    CONF_COVER_CLOSED,
     CONF_GRID_POWER,
     CONF_OUTDOOR_TEMP,
     CONF_PDC_AIR_TEMP,
@@ -184,6 +183,5 @@ class VillaPoolCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "workday": self.onoff(CONF_WORKDAY),
             # owner inputs
             "pool_in_use": self.onoff(CONF_POOL_IN_USE) is True,
-            "cover_closed": self.onoff(CONF_COVER_CLOSED),
             "volume_today_m3": self.volume_today_m3,
         }

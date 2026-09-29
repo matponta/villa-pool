@@ -337,10 +337,11 @@ class VolumeTodaySensor(RestoreSensor, PoolSensorBase):
 
 
 class CoverClosedForSensor(PoolSensorBase):
-    """Hours the cover has read closed.
+    """Hours since the cover was last seen OPEN, while it reads closed.
 
-    `unknown` until the cover sensor exists and is picked in the options flow
-    (it is installed 20-21/9; its entity id is not guessed — STORY §1).
+    Measured from the recorder, not from the helper's `last_changed` — a
+    restart or an `unavailable` blip resets that without the cover moving
+    (`supervisor/cover.py`). `unknown` while the cover is open or unknown.
     """
 
     _attr_name = "Cover closed for"
@@ -365,8 +366,19 @@ class CoverClosedForSensor(PoolSensorBase):
 
     @property
     def extra_state_attributes(self) -> dict:
+        tracker = getattr(self._engine, "cover", None)
+        detail = self._decision.detail if self._decision else {}
         return {
             "cover_entity": self.coordinator.eid("cover_closed"),
+            "last_seen_open": (
+                tracker.last_open.isoformat()
+                if tracker is not None and tracker.last_open else None
+            ),
+            # True: no opening anywhere in the recorder's history, so the
+            # figure is "at least this long".
+            "lower_bound": tracker.bound if tracker is not None else None,
+            "cover_day": detail.get("cover_day"),
+            "chlorine_target_h": detail.get("chlorine_target_h"),
             "note": (
                 "no cover sensor configured yet — cover rules are inert"
                 if not self.coordinator.eid("cover_closed") else None
