@@ -6,10 +6,13 @@
   ],
   "config_flow": true,
   "dependencies": [],
+  "after_dependencies": [
+    "recorder"
+  ],
   "documentation": "https://github.com/matponta/villa-pool",
   "integration_type": "hub",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/matponta/villa-pool/issues",
   "requirements": [],
-  "version": "0.8.0"
+  "version": "0.9.0"
 }

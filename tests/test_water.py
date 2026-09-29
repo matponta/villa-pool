@@ -193,11 +193,11 @@ class TestPhCeiling:
 
 
 class TestTargetHours:
-    def test_trim_is_added_after_the_cover_factor(self):
-        st = chem(at(d=21, hh=18), cover_closed=True,
+    def test_trim_is_added_after_the_cover_ramp(self):
+        st = chem(at(d=21, hh=18), cover_closed=True, cover_closed_days=2,
                   target_chlorine_hours=8.0)
-        # 8.0 * 0.5 cover factor, then +1.0 — not (8.0 + 1.0) * 0.5. The cover
-        # scales what the pool LOSES; the trim is what the water measured.
+        # Day 2 of 8 -> 2 over 3 days is 4.0, then +1.0. The ramp estimates
+        # what the pool LOSES; the trim is what the water measured.
         assert target_hours(st, 1.0) == 5.0
 
     def test_target_never_goes_negative(self):
@@ -323,12 +323,16 @@ class TestInterlocksStillOutrank:
         assert d.chlorine_on is False
         assert d.actuate is False
 
-    def test_cover_closed_24h_still_cuts_the_cell(self):
+    def test_a_low_orp_extends_past_the_cover_floor(self):
+        """The floor is a floor, not a ceiling: at the cover floor with the
+        floor met, a low ORP still buys hours back (v0.9.0). Under the old
+        24 h cut-off nothing could."""
         now = at(d=21, hh=18)
-        st = chem(now, water_orp=300.0, cover_closed=True,
-                  cover_closed_for_h=30.0)
+        st = chem(now, water_orp=600.0, cover_closed=True,
+                  cover_closed_days=5, chlorine_hours_today=2.0)
         d = decide(st, fresh_mem(now))[0]
-        assert d.chlorine_on is False
+        assert d.chlorine_on is True
+        assert d.detail["chlorine_target_h"] == 4.0     # 2.0 floor + 2.0
 
     def test_below_80_percent_the_cell_stays_off(self):
         """§6's guardrail: the cell's flow-switch minimum is still unknown."""

@@ -307,12 +307,14 @@ class TestChlorineGuardrails:
         assert on is False
         assert "below chlorine minimum" in reason
 
-    def test_cover_halves_the_target(self):
+    def test_the_day_the_cover_closes_keeps_the_full_target(self):
+        """Day 0 of the ramp is `target_chlorine_hours` itself: the pool was
+        most likely in use that morning."""
         now = at(2026, 9, 16, 12, 0)
-        st = state(now, cover_closed=True, cover_closed_for_h=3.0,
+        st = state(now, cover_closed=True, cover_closed_days=0,
                    chlorine_hours_today=4.5)
         dec, _ = decide(st, memory(now))
-        assert dec.chlorine_on is False      # target is 8 * 0.5 = 4
+        assert dec.chlorine_on is True       # 4.5 of 8
 
     def test_free_hours_run_chlorine_outside_its_window(self):
         """§5.3: take the production while the PdC already pays for the pump.

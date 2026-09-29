@@ -45,6 +45,76 @@ discovering it during a reinstall.
 
 ---
 
+## v0.9.0 — the cover ramp (§5.3, owner amendment 2026-09-29) — NOT YET DEPLOYED
+
+### Why
+
+Live on 2026-09-29 13:33: `chlorine OFF — cover closed > 24 h`, and
+`sensor.salt_chlorinator_runtime_today` at **0.0 since 27/9 00:00**. The 24 h
+cut-off had run the pool at zero chlorine for three days under a closed cover
+with the water at 27-28 °C. Owner: "il cloro a 0 col telo chiuso non va bene".
+
+### What changed
+
+- The 24 h cut-off and `cover_chlorine_factor` are gone. With the cover closed
+  the target ramps from `target_chlorine_hours` (day 0) to
+  `number.pool_cover_min_chlorine_hours` (default 2 h) over
+  `number.pool_cover_ramp_days` (default 3) calendar days: 8 → 6 → 4 → 2.
+  Computed from both ends, so it stays proportional when either moves.
+- "Closed for N days" now comes from the **last time the cover was seen open
+  in the recorder** (`supervisor/cover.py`, `engine._update_cover`), not from
+  `last_changed`. Live evidence it had to: the helper has read `on` since 22/9
+  and its `last_changed` says 25/9 15:49 (a restart), so v0.8.0 thought the
+  cover had been shut for 93.7 h when it had been shut for ~170.
+- An `unavailable` gap holds the last reading for 1 h (`COVER_GAP_GRACE_S`).
+- The reason line carries `[cover day N: target X h]` / `[cover floor: …]`;
+  `sensor.pool_cover_closed_for` gains `last_seen_open`, `lower_bound`,
+  `cover_day`, `chlorine_target_h`.
+- `manifest.json`: `after_dependencies: ["recorder"]`, version 0.9.0.
+
+### Pre-tag adversarial review — what it found
+
+- **Fallbacks all point the same way.** No recorder / failed read / no opening
+  in history → lower bound → fewer days → MORE chlorine. A gap past 1 h → full
+  target. Checked each; none can land a pool on the floor by accident except a
+  genuinely shut cover.
+- **No oscillation.** The ramp's input (the cover) is not driven by anything
+  the supervisor controls, unlike the ORP cut that v0.8.0 refused. With ORP
+  extension on top: floor met → cell off → pump off (outside its window) →
+  reading stale → trim 0 → target = floor → still met → stays off. Same
+  settle-to-off argument as v0.8.0.
+- **The target cannot move mid-day** from the ramp: calendar days. It CAN move
+  mid-day when the cover opens (floor → full target). That is intended.
+- **Found and accepted:** an opening shorter than one tick is in the recorder
+  but not re-read until the next seed (restart / reload). Errs towards less
+  chlorine for a cover that was barely opened. Documented in CLAUDE.md.
+- **Found and accepted:** a sensor dead for days, then back reading `on` with
+  no `off` in history, is treated as "closed at least since the oldest
+  record" → floor at once. There is no opening evidence either way; the rule
+  the owner asked for ("time since the last open signal") says exactly that.
+- **Retired entity.** `number.pool_poolbrain_cover_chlorine_factor` stops being
+  provided and will show as unavailable/orphaned in the registry. **It is
+  referenced on `pool-overview-v2`** (found via search 2026-09-29) — that card
+  needs editing by patch, and the orphan deleting from the entity registry.
+
+### Deploy checklist
+
+1. Install v0.9.0, restart. Check the log line `Cover
+   binary_sensor.pool_telo_chiuso: last seen open …` — expect 22/9 (or
+   `lower bound`, if 22/9 has been purged or the cover truly never opened).
+2. `sensor.pool_poolbrain_supervisor_reason` should read `[cover floor: target
+   2.0 h]` (plus any ORP extension — `switch.pool_poolbrain_orp_control` was ON
+   at 13:24 on 29/9) and the chlorinator should come ON in its window.
+3. New entity ids will be `number.pool_poolbrain_cover_min_chlorine_hours` and
+   `number.pool_poolbrain_cover_ramp_days` (live device name, see above).
+4. Replace the `cover_chlorine_factor` card on `pool-overview-v2`, record it in
+   a `dashboard_*_cards.yaml`, delete the orphaned entity.
+5. **Owner question still open:** has the cover really not been opened once
+   since 22/9? If it has, the sensor/helper is not reporting openings and the
+   ramp is sitting on the floor for the wrong reason.
+
+---
+
 ## The cover sensor lands — the §1 telo input (2026-09-22) — no version bump
 
 **Zero lines of integration code changed.** All of this is HA-side: the

@@ -22,7 +22,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
+from functools import partial
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -30,11 +31,15 @@ from homeassistant.util import dt as dt_util
 
 from .actuator import Actuator
 from .const import (
+    CONF_COVER_CLOSED,
+    COVER_GAP_GRACE_S,
+    COVER_HISTORY_DAYS,
     DEFAULT_ANTIFREEZE_OFF_C,
     DEFAULT_GRID_DAY_TOPUP,
     DEFAULT_ANTIFREEZE_ON_C,
     DEFAULT_ANTIFREEZE_SPEED,
-    DEFAULT_COVER_CHLORINE_FACTOR,
+    DEFAULT_COVER_MIN_CHLORINE_HOURS,
+    DEFAULT_COVER_RAMP_DAYS,
     DEFAULT_DEADLINE,
     DEFAULT_FILTRATION_SPEED,
     DEFAULT_MIN_TEMP,
@@ -65,6 +70,7 @@ from .const import (
     PDC_STATES,
 )
 from .supervisor import (
+    CoverTracker,
     Decision,
     Memory,
     PoolConfig,
@@ -120,6 +126,12 @@ class SupervisorEngine:
         # One lock serialises the scheduled tick and any awaited request_run, so
         # two passes can never interleave over the shared Memory.
         self._lock = asyncio.Lock()
+        # "Closed for N days" is measured from the last time the cover was
+        # seen OPEN, rebuilt from the recorder on the first tick for whichever
+        # entity is configured — not from `last_changed`, which a restart and
+        # every `unavailable` blip reset (see `supervisor/cover.py`).
+        self.cover = CoverTracker(grace_s=COVER_GAP_GRACE_S)
+        self._cover_seeded_for: str | None = None
 
     # --- lifecycle -----------------------------------------------------------
 
@@ -192,9 +204,10 @@ class SupervisorEngine:
             winter_chlorine_hours=float(
                 v("winter_chlorine_hours", DEFAULT_WINTER_CHLORINE_HOURS)
             ),
-            cover_chlorine_factor=float(
-                v("cover_chlorine_factor", DEFAULT_COVER_CHLORINE_FACTOR)
+            cover_min_chlorine_hours=float(
+                v("cover_min_chlorine_hours", DEFAULT_COVER_MIN_CHLORINE_HOURS)
             ),
+            cover_ramp_days=int(v("cover_ramp_days", DEFAULT_COVER_RAMP_DAYS)),
             winter_hours=float(v("winter_hours", DEFAULT_WINTER_HOURS)),
             orp_target=float(v("orp_target", DEFAULT_ORP_TARGET_MV)),
             orp_max_extra_hours=float(
@@ -244,8 +257,9 @@ class SupervisorEngine:
             pdc_available=bool(data.get("pdc_available", True)),
             chlorine_running=data.get("chlorine_running"),
             chlorine_hours_today=float(data.get("chlorine_hours_today") or 0.0),
-            cover_closed=data.get("cover_closed"),
-            cover_closed_for_h=self._cover_closed_for_h(now),
+            cover_closed=self.cover.closed(utc_now),
+            cover_closed_for_h=self.cover.closed_for_h(utc_now),
+            cover_closed_days=self._cover_closed_days(now, utc_now),
             pool_in_use=bool(data.get("pool_in_use")),
             maintenance=bool(v("maintenance", False)),
             grid_heating=bool(v("grid_heating", True)),
@@ -258,20 +272,79 @@ class SupervisorEngine:
             water_ec=data.get("water_ec"),
         )
 
-    def _cover_closed_for_h(self, now: datetime) -> float | None:
-        """How long the cover has read `closed`, from the entity's own history.
+    def _cover_closed_days(self, now: datetime, utc_now: datetime) -> int | None:
+        """Calendar days since the cover was last seen open, while it is shut.
 
-        Returns None while no cover entity is configured — which is the case
-        today (the sensor is installed 20-21/9, id TBD). Every cover rule is
-        therefore inert until the owner supplies the entity id.
+        Local dates on purpose: the ramp steps at midnight, the same midnight
+        the chlorinator's daily counter resets at, so today's target does not
+        move under the day it is counted against.
         """
-        entity_id = self.coordinator.eid("cover_closed")
+        if self.cover.closed(utc_now) is not True or self.cover.last_open is None:
+            return None
+        opened = dt_util.as_local(self.cover.last_open).date()
+        return max(0, (now.date() - opened).days)
+
+    async def _cover_history(
+        self, entity_id: str, utc_now: datetime
+    ) -> list[tuple[str, datetime]]:
+        """The helper's state changes over the last COVER_HISTORY_DAYS.
+
+        Empty when the recorder is not loaded, excludes the entity or fails —
+        the tracker then falls back to the live state's own `last_changed` as
+        a lower bound, which is what v0.8.0 used and errs towards MORE
+        chlorine (fewer days counted), never less.
+        """
+        if "recorder" not in self.hass.config.components:
+            return []
+        # Imported here, not at module level: only needed once per entity, and
+        # the recorder is an after_dependency rather than a hard one.
+        from homeassistant.components.recorder import get_instance, history
+
+        try:
+            changes = await get_instance(self.hass).async_add_executor_job(
+                partial(
+                    history.state_changes_during_period,
+                    self.hass,
+                    utc_now - timedelta(days=COVER_HISTORY_DAYS),
+                    None,
+                    entity_id,
+                    no_attributes=True,
+                    include_start_time_state=True,
+                )
+            )
+        except Exception:  # noqa: BLE001 — a history read must never stop the tick
+            _LOGGER.warning(
+                "Could not read the history of %s; measuring the cover from "
+                "its current state only", entity_id, exc_info=True,
+            )
+            return []
+        return [
+            (s.state, s.last_changed)
+            for s in changes.get(entity_id.lower(), [])
+        ]
+
+    async def _update_cover(self, utc_now: datetime) -> None:
+        """Seed the tracker once per configured entity, then feed it live."""
+        entity_id = self.coordinator.eid(CONF_COVER_CLOSED)
         if not entity_id:
-            return None
-        state = self.hass.states.get(entity_id)
-        if state is None or state.state != "on":
-            return None
-        return (dt_util.utcnow() - state.last_changed).total_seconds() / 3600.0
+            self.cover = CoverTracker(grace_s=COVER_GAP_GRACE_S)
+            self._cover_seeded_for = None
+            return
+        live = self.hass.states.get(entity_id)
+        if self._cover_seeded_for != entity_id:
+            self.cover = CoverTracker(grace_s=COVER_GAP_GRACE_S)
+            history = await self._cover_history(entity_id, utc_now)
+            if not history and live is not None:
+                history = [(live.state, live.last_changed)]
+            self.cover.seed(history, utc_now)
+            self._cover_seeded_for = entity_id
+            _LOGGER.info(
+                "Cover %s: last seen open %s%s", entity_id,
+                self.cover.last_open,
+                " (lower bound: no opening in the history)"
+                if self.cover.bound else "",
+            )
+        self.cover.observe(live.state if live is not None else None, utc_now)
 
     # --- the tick ------------------------------------------------------------
 
@@ -285,7 +358,9 @@ class SupervisorEngine:
             # is wall-clock: "23:00" means 23:00 in Italy, in July and in
             # January alike), UTC for every timer. See `model.PoolState`.
             now = dt_util.now().replace(tzinfo=None)
-            state = self._build_state(now, dt_util.utcnow())
+            utc_now = dt_util.utcnow()
+            await self._update_cover(utc_now)
+            state = self._build_state(now, utc_now)
             if not self._restored:
                 self.memory = self._restore(state)
                 # A run we ADOPTED was already going before we booted, so the

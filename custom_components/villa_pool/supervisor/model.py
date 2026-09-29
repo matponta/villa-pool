@@ -23,6 +23,8 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, time
 
 from ..const import (
+    DEFAULT_COVER_MIN_CHLORINE_HOURS,
+    DEFAULT_COVER_RAMP_DAYS,
     DEFAULT_ORP_MAX_EXTRA_HOURS,
     DEFAULT_ORP_TARGET_MV,
     DEFAULT_PH_CEILING,
@@ -69,9 +71,14 @@ class PoolConfig:
     target_turnovers: float
     target_chlorine_hours: float
     winter_chlorine_hours: float
-    cover_chlorine_factor: float
     winter_hours: float
     windows: Windows
+    # --- the cover ramp (§5.3, amendment 2026-09-29) -------------------------
+    # With the cover shut the target steps down from `target_chlorine_hours`
+    # to this floor over `cover_ramp_days` calendar days, and stays there.
+    # Both are settings, so the steps stay proportional when either end moves.
+    cover_min_chlorine_hours: float = DEFAULT_COVER_MIN_CHLORINE_HOURS
+    cover_ramp_days: int = DEFAULT_COVER_RAMP_DAYS
     # --- water chemistry (§5.3, §9) ------------------------------------------
     # Defaulted, so every PoolConfig built before v0.8.0 -- and every test that
     # builds one -- keeps working and keeps the v0.6.0 law unchanged.
@@ -128,11 +135,18 @@ class PoolState:
     chlorine_running: bool | None = None
     chlorine_hours_today: float = 0.0
 
-    # --- cover (sensor not installed yet; id TBD — STORY §1) -----------------
-    # None = no sensor configured or unknown. The 24 h cut-off can only fire on
-    # a POSITIVE closed reading, so an absent sensor never disables chlorine.
+    # --- cover (binary_sensor.pool_telo_chiuso — STORY §1/§2) ----------------
+    # None = no sensor configured, or no reading inside the gap grace. Only a
+    # POSITIVE closed reading moves the chlorine target, so an absent or dead
+    # sensor leaves the full target in force.
     cover_closed: bool | None = None
+    # Hours since the cover was last seen OPEN (diagnostic), and the same thing
+    # as calendar days: 0 on the day it closed, 1 from the next midnight, ...
+    # Calendar days, not 24 h blocks, so the target cannot move in the middle
+    # of the day it is being counted against. Measured from the recorder, not
+    # from `last_changed` — see `cover.py`.
     cover_closed_for_h: float | None = None
+    cover_closed_days: int | None = None
 
     # --- owner switches / inputs ---------------------------------------------
     pool_in_use: bool = False

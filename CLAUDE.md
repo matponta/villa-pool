@@ -24,7 +24,7 @@ skeleton and conventions and shares nothing at runtime.**
 Target: Home Assistant **2026.8.3** (Python ≥ 3.14). Single instance,
 config-flow hub.
 
-## Status: v0.8.0 in the repo; deployed and actuating since 2026-09-17 20:04.
+## Status: v0.9.0 in the repo (v0.8.0 deployed); actuating since 2026-09-17 20:04.
 
 **The integration is live on the owner's HA and `switch.pool_dry_run` is OFF.**
 Anything in this repo that reads as "not yet deployed" is stale — `NEXT_SESSION.md`
@@ -229,10 +229,10 @@ illuminance / rotation / signal-strength set.
 
 **The raw entity is inverted, and wiring it straight in would be silently
 wrong.** It carries `device_class: window`, so in HA `on` = OPEN — while
-`coordinator.onoff(CONF_COVER_CLOSED)` reads `on` as `cover_closed=True`. Point
-the options flow at it directly and the pool halves its chlorine target exactly
-when the cover is OFF and UV is eating the free chlorine, then cuts the cell
-after 24 h of open sun. Nothing logs an error; the reason line looks normal.
+`supervisor/cover.CoverTracker` reads `on` as closed. Point the options flow at
+it directly and the pool ramps its chlorine down to the floor exactly when the
+cover is OFF and UV is eating the free chlorine. Nothing logs an error; the
+reason line looks normal.
 
 So `cover_closed` points at a **template helper**, `binary_sensor.pool_telo_chiuso`
 (HA config entry `01M33194SS4294YYG9MDSZKEDV`) — which is also the id STORY §1
@@ -246,31 +246,52 @@ availability: {{ has_value('binary_sensor.shelly_blu_door_window_480b_window') }
 **The availability template is load-bearing, not decoration.** A bare
 `not is_state(...)` renders truthy when the source is missing, i.e. "cover
 closed" on a dead sensor. With `has_value()` the helper goes `unavailable`,
-`_cover_closed_for_h` returns `None`, `coordinator.onoff` yields `None`, and
-every cover rule goes inert — the PdC's "a read gap is not evidence", applied to
+the tracker holds the last reading for `COVER_GAP_GRACE_S` (1 h) and then
+answers `None`, and every cover rule goes inert — the PdC's "a read gap is not evidence", applied to
 the cover. The direction matters for `session.py` too: a wrong `cover_closed`
 is recorded against every heating session, i.e. into the data the COP model is
 meant to be *fitted* from, where a wrong point is worse than no point because
 it would be believed.
 
-**The factor is 0.8, not the shipped 0.5** (owner, 2026-09-22). The 2026-09-21
-measurement is the reason: the cell ran 6.69 h against a 6.0 h target —
-`chlorine_hours_missing` 0, the day "done" — and the reference measured FAC
-1.2 ppm, under §9's 1.5-2. The hours law was already running lean at the FULL
-target, and 0.5 had never been validated against this pool. Start high and walk
-it down against measured FAC, not the other way round.
+The polarity has been observed in ONE position only: cover physically shut ↔
+raw `off` ↔ helper `on`, confirmed 2026-09-22 00:28. As of 2026-09-29 the
+recorder holds **no `off` at all** since then. The first opening is the check —
+if the helper does not go `off`, the inversion is backwards.
 
-Two things that are still open, and both are cheap to close:
+### The cover ramp (§5.3, owner amendment 2026-09-29, v0.9.0)
 
-- **The polarity has been observed in ONE position only.** Cover physically
-  shut ↔ raw `off` ↔ helper `on`, confirmed 2026-09-22 00:28. The sensor has
-  never been seen to change state. A reed has exactly two positions so the
-  inference is sound, but the first opening is the check — if the helper does
-  not go `off`, the inversion is backwards.
-- **The first 24 h window is fake.** `_cover_closed_for_h` reads the helper's
-  own `last_changed`, which is when the helper was CREATED, not when the cover
-  shut. The first `cover closed > 24 h` cutoff is therefore measured from
-  midnight on 22/9. It self-corrects at the first opening.
+**A closed cover never cuts the cell any more.** v0.8.0 cut it after 24 h, and
+the pool ran at ZERO hours from 27/9 to 29/9, under a cover, with the PdC
+holding the water at 27-28 °C. `cover_chlorine_factor` (0.8 by then) went with
+it. Now `chlorine.cover_target_hours` draws a straight line from
+`target_chlorine_hours` on day 0 to `cover_min_chlorine_hours` (2 h) on day
+`cover_ramp_days` (3), flat after: 8 → 6 → 4 → 2. **The steps are computed
+from the two ends, so the ramp stays proportional when the owner moves either**
+— that was the explicit ask. The ORP extension adds on top, so the floor is a
+floor and not a ceiling.
+
+- **Calendar days, not 24 h blocks.** The ramp steps at the same midnight the
+  chlorinator's daily counter resets at, so the target cannot move under the
+  day it is counted against (`test_the_target_does_not_move_during_the_day`).
+  Day 0 is the full target: the pool was most likely in use that morning.
+- **"Closed for" is measured from the last time the cover was seen OPEN**, not
+  from `last_changed`. The live evidence: the helper read `on` continuously
+  from 22/9 and its `last_changed` said 25/9 15:49 — the restart. Every
+  `unavailable` blip resets it too. `engine._update_cover` seeds a
+  `CoverTracker` from the recorder (`COVER_HISTORY_DAYS` = 10) on the first
+  tick for each configured entity, then feeds it the live state every tick.
+- **Every fallback errs towards MORE chlorine.** No opening in the history →
+  the oldest record is a lower bound (`lower_bound: true` on
+  `sensor.pool_cover_closed_for`). No recorder, or a failed read → the live
+  `last_changed`, i.e. what v0.8.0 used. A gap longer than 1 h → cover unknown
+  → full target.
+- **The ramp is not an interlock and has no loop.** The cover's state does not
+  depend on anything the supervisor drives, so unlike an ORP *cut* it cannot
+  oscillate; and it no longer outranks `pool_in_use`.
+- **Known limitation:** an opening shorter than one tick (60 s) that the
+  recorder saw but the tick did not is not picked up until the next restart
+  re-seeds. It errs towards less chlorine for a cover that was, in practice,
+  barely opened.
 
 Image detection from `camera.g6_bbq_high_resolution_channel` was explored on
 2026-09-21/22 and **dropped** in favour of the physical sensor alone (owner,
@@ -362,7 +383,7 @@ law decides → engine reports. No module skips a step.
   unit-testable without HA and replayable offline against the dry-run logs.
   Submodules: `windows` (the only place midnight wrap-around is interpreted) ·
   `solar` (hysteresis + entry dwell) · `pdc` (the 4-state machine) · `chlorine`
-  (enable-to-target) · `pump` (demand collection + sequencing) · `cop`
+  (enable-to-target, the cover ramp) · `cover` (last seen open, gap grace) · `pump` (demand collection + sequencing) · `cop`
   (diagnostic model) · `water` (is the chemistry reading real, and the ORP
   trim) · `law` (`decide()` + the §5.5 ladder + `restore_memory`) ·
   `actuation` (should this lever be commanded at all) · `model` (the data
@@ -450,7 +471,7 @@ the same situation restarting the machine when the anchor is dropped.
   amendment — §5.4's daytime top-up ignores the band). Reason on *bands*, never
   on prices — the PUN index changes monthly.
 - **Never point `cover_closed` at the Shelly BLU entity directly.** It is
-  `device_class: window`, so `on` means OPEN, while `coordinator.onoff` reads
+  `device_class: window`, so `on` means OPEN, while `CoverTracker` reads
   `on` as closed. The options flow points at `binary_sensor.pool_telo_chiuso`,
   the template helper that inverts it AND carries an availability template.
 - **Do not turn the pump off on unload.** Release nothing destructive; just stop

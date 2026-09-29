@@ -292,43 +292,55 @@ class TestCriterion05PumpFaultBlocksThePdC:
 
 # --- §7.6 --------------------------------------------------------------------
 
-class TestCriterion06CoverClosed25Hours:
-    """6. Cover closed 25 h -> chlorine off even with pool_in_use; reopen ->
-    resumes."""
+class TestCriterion06CoverRamp:
+    """6. AMENDED 2026-09-29. Was: "Cover closed 25 h -> chlorine off even
+    with pool_in_use; reopen -> resumes." That rule ran the pool at zero for
+    three days (27-29/9). Now: with the cover closed the chlorine target steps
+    from `target_chlorine_hours` to `cover_min_chlorine_hours` over
+    `cover_ramp_days` calendar days and never below; reopen -> full target."""
 
-    def test_chlorine_off_after_25_h_closed_even_when_in_use(self):
+    def test_a_week_closed_still_makes_chlorine(self):
         now = at(2026, 9, 16, 12, 0)
-        st = state(now, cover_closed=True, cover_closed_for_h=25.0,
-                   pool_in_use=True)
+        st = state(now, cover_closed=True, cover_closed_days=7,
+                   chlorine_hours_today=1.0)
+        dec, _ = run(st, memory(now))
+        assert dec.chlorine_on is True
+
+    def test_the_floor_is_met_and_then_it_stops(self):
+        now = at(2026, 9, 16, 12, 0)
+        st = state(now, cover_closed=True, cover_closed_days=7,
+                   chlorine_hours_today=2.0)
         dec, _ = run(st, memory(now))
         assert dec.chlorine_on is False
 
-    def test_reason_names_the_cover(self):
+    def test_reason_names_the_cover_and_the_target(self):
         now = at(2026, 9, 16, 12, 0)
-        st = state(now, cover_closed=True, cover_closed_for_h=25.0,
-                   pool_in_use=True)
+        st = state(now, cover_closed=True, cover_closed_days=1)
         dec, _ = run(st, memory(now))
-        assert "cover" in dec.reason.lower()
+        assert "cover day 1: target 6.0 h" in dec.reason
 
-    def test_reopening_resumes_chlorine(self):
+    def test_pool_in_use_is_no_longer_overruled_by_the_cover(self):
         now = at(2026, 9, 16, 12, 0)
-        st = state(now, cover_closed=False, cover_closed_for_h=0.0,
-                   pool_in_use=True)
+        st = state(now, cover_closed=True, cover_closed_days=7,
+                   chlorine_hours_today=5.0, pool_in_use=True)
         dec, _ = run(st, memory(now))
         assert dec.chlorine_on is True
 
-    def test_23_hours_closed_is_still_fine(self):
+    def test_reopening_restores_the_full_target(self):
         now = at(2026, 9, 16, 12, 0)
-        st = state(now, cover_closed=True, cover_closed_for_h=23.0)
+        st = state(now, cover_closed=False, chlorine_hours_today=2.0)
         dec, _ = run(st, memory(now))
         assert dec.chlorine_on is True
+        assert dec.detail["chlorine_target_h"] == 8.0
 
-    def test_absent_cover_sensor_never_cuts_chlorine(self):
-        """The sensor is not installed yet (STORY §1) — unknown is not closed."""
+    def test_absent_cover_sensor_leaves_the_full_target(self):
+        """Unknown is not closed."""
         now = at(2026, 9, 16, 12, 0)
-        st = state(now, cover_closed=None, cover_closed_for_h=None)
+        st = state(now, cover_closed=None, cover_closed_days=None,
+                   chlorine_hours_today=2.0)
         dec, _ = run(st, memory(now))
         assert dec.chlorine_on is True
+        assert dec.detail["cover_day"] is None
 
 
 # --- §7.7 --------------------------------------------------------------------

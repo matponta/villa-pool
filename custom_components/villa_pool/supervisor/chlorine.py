@@ -5,12 +5,15 @@ cell actually produces. So the only honest measure of progress is
 `sensor.salt_chlorinator_runtime_today`; the relay's own state is not evidence
 of production and is never counted.
 
-Two hard rules that outrank the owner's own `pool_in_use`:
+One hard rule outranks the owner's own `pool_in_use`: the hydraulic interlock
+— no confirmed flow, no cell.
 
-* the hydraulic interlock — no confirmed flow, no cell; and
-* the 24 h cover rule — a pool that has been shut for a day does not need more
-  chlorine, and making it anyway is how you end up over-chlorinated under a
-  closed cover.
+Until v0.9.0 there was a second: a cover closed for more than 24 h cut the cell
+outright. It ran the pool at ZERO hours from 27/9 to 29/9 under a closed cover
+and water at 27-28 °C, which is where free chlorine goes fastest. A cover cuts
+UV loss, not all loss. The owner's amendment (2026-09-29) replaced it with a
+ramp to a floor — `cover_target_hours` — and the floor is never zero unless
+the owner sets it so.
 
 The target is a proxy: hours, not grams. The real target is FAC 1.5-2 ppm
 (STORY §9). From v0.8.0 an ORP probe can *trim* that proxy — `orp_trim_h`,
@@ -23,7 +26,6 @@ from __future__ import annotations
 
 from ..const import (
     CHLORINE_MIN_PUMP_SPEED,
-    COVER_CLOSED_CHLORINE_CUTOFF_H,
     MODE_WINTER,
     PDC_SOLAR,
 )
@@ -31,38 +33,61 @@ from .model import PoolState
 from .windows import in_slot, in_window
 
 
-def cover_cutoff(state: PoolState) -> bool:
-    """Has the cover been closed longer than the 24 h cut-off?
+def cover_day(state: PoolState) -> int | None:
+    """Which day of the cover ramp today is, or None when the ramp is off.
 
-    Only a POSITIVE closed reading can trigger this. The sensor is not
-    installed yet (id TBD, STORY §1) and an absent or unknown one must never
-    silently stop chlorination.
+    0 is the day the cover closed. None whenever the cover does not read a
+    POSITIVE closed — open, unknown or no sensor all leave the full target.
     """
-    if not state.cover_closed:
-        return False
-    hours = state.cover_closed_for_h
-    return hours is not None and hours > COVER_CLOSED_CHLORINE_CUTOFF_H
+    if state.cover_closed is not True:
+        return None
+    return max(0, state.cover_closed_days or 0)
+
+
+def cover_target_hours(state: PoolState) -> float | None:
+    """The cover's chlorine target for today, before any ORP extension.
+
+    A straight line from `target_chlorine_hours` on day 0 to
+    `cover_min_chlorine_hours` on day `cover_ramp_days`, flat after it. Both
+    ends are the owner's settings and the steps are computed from them, so
+    moving either keeps the ramp proportional: 8 -> 2 over 3 days is 8, 6, 4,
+    2; 6 -> 2 is 6, 4.7, 3.3, 2.
+
+    A floor set ABOVE the full target is read as the full target: a cover can
+    lower the demand, never raise it. A ramp of 0 days drops to the floor on
+    the day the cover closes.
+    """
+    day = cover_day(state)
+    if day is None:
+        return None
+    cfg = state.config
+    start = cfg.target_chlorine_hours
+    floor = min(max(0.0, cfg.cover_min_chlorine_hours), start)
+    ramp = max(0, int(cfg.cover_ramp_days))
+    fraction = 1.0 if ramp == 0 else min(day, ramp) / ramp
+    return start - (start - floor) * fraction
 
 
 def target_hours(state: PoolState, orp_trim_h: float = 0.0) -> float:
     """Today's effective chlorine-hours target.
 
-    Halved (by `cover_chlorine_factor`) while the cover is closed: less UV
-    burn-off under the cover means less production is needed.
+    The full target with the cover open; the cover ramp's value while it is
+    closed (`cover_target_hours`).
 
     `orp_trim_h` is the §9 chemistry correction, already clamped by
-    `water.orp_trim`. It is applied AFTER the cover factor, not before —
-    the cover scales how much the pool *loses*, while the trim answers what the
-    water actually measured, and scaling a measurement by the cover factor
-    would be double-counting. Winter ignores it entirely: that is a fixed
-    maintenance dose in a closed pool, not a target to chase.
+    `water.orp_trim`. It is added AFTER the ramp, not scaled by it: the ramp
+    estimates how much the pool *loses* under the cover, while the trim answers
+    what the water actually measured. That is also what makes the floor a
+    floor rather than a ceiling — with the probe on, a shut pool that is
+    losing more than the ramp assumed gets the hours back. Winter ignores it
+    entirely: that is a fixed maintenance dose in a closed pool, not a target
+    to chase.
     """
     cfg = state.config
     if state.mode == MODE_WINTER:
         return cfg.winter_chlorine_hours
-    target = cfg.target_chlorine_hours
-    if state.cover_closed:
-        target *= cfg.cover_chlorine_factor
+    covered = cover_target_hours(state)
+    target = cfg.target_chlorine_hours if covered is None else covered
     return max(0.0, target + orp_trim_h)
 
 
@@ -112,8 +137,6 @@ def chlorine_decision(
         return False, "pump not in marcia"
     if antifreeze:
         return False, "antifreeze"
-    if cover_cutoff(state):
-        return False, "cover closed > 24 h"
     # Guardrail §6: the cell's flow-switch minimum is UNKNOWN, so the
     # chlorinator is never enabled below the calibrated 80 % until the
     # step-down test has been done.

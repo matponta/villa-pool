@@ -14,7 +14,6 @@ from custom_components.villa_pool.const import (
     DEFAULT_ANTIFREEZE_OFF_C,
     DEFAULT_ANTIFREEZE_ON_C,
     DEFAULT_ANTIFREEZE_SPEED,
-    DEFAULT_COVER_CHLORINE_FACTOR,
     DEFAULT_FILTRATION_SPEED,
     DEFAULT_MIN_TEMP,
     DEFAULT_PDC_SPEED,
@@ -57,7 +56,6 @@ def config(**kw) -> PoolConfig:
         target_turnovers=DEFAULT_TARGET_TURNOVERS,
         target_chlorine_hours=DEFAULT_TARGET_CHLORINE_HOURS,
         winter_chlorine_hours=DEFAULT_WINTER_CHLORINE_HOURS,
-        cover_chlorine_factor=DEFAULT_COVER_CHLORINE_FACTOR,
         winter_hours=DEFAULT_WINTER_HOURS,
         windows=DEFAULT_WINDOWS,
     )
