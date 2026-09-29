@@ -1,14 +1,14 @@
 {
   "domain": "villa_pool",
   "name": "Villa Pool",
+  "after_dependencies": [
+    "recorder"
+  ],
   "codeowners": [
     "@matponta"
   ],
   "config_flow": true,
   "dependencies": [],
-  "after_dependencies": [
-    "recorder"
-  ],
   "documentation": "https://github.com/matponta/villa-pool",
   "integration_type": "hub",
   "iot_class": "local_polling",
