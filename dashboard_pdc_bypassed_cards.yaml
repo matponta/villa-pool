@@ -1,0 +1,43 @@
+# Cards changed on `pool-overview-v2` for v0.10.0, the PdC bypassed for the
+# winter (2026-11-03).
+#
+# Applied live with ha_config_set_dashboard(patch=...) against a fresh
+# config_hash, guarded by `test` ops on every card touched. That dashboard is
+# storage-mode and hand-built by the owner: it is NEVER replaced wholesale.
+#
+#   config_hash before: 09952f6ce2367111
+#   config_hash after:  c0c878e5b7348157
+#
+# IDs are the LIVE ones (*_poolbrain_*). Applied as one python_transform
+# guarded by an `ok` check (card 6 is the maintenance tile, card 1 is the
+# markdown, each replaced fragment occurs exactly once, no bypass tile yet).
+# Rendered live at 14:15: "modalità winter · 🚰 PdC BYPASSATA (svuotata) |
+# PdC BLOCKED — PdC blocked: bypassed (drained) | COP 2.44 (aria 14.2 °C)".
+#
+# 1. Section 1 (the PoolBrain status panel), card 7: the bypass tile ADDED
+#    right after "Manutenzione (pausa)" (card 6), same width, so the two
+#    "the PdC/pool is out of the loop" switches sit side by side.
+# 2. Section 1, card 1 (markdown): `content` patched in two places, nothing
+#    else touched —
+#    a. the header line gains " · 🚰 PdC BYPASSATA (svuotata)" while the switch
+#       is ON, next to the existing " · 🔧 MANUTENZIONE";
+#    b. "COP stimato … (aria {{ states('sensor.pool_pdc_temp_ambiente') }} °C)"
+#       now reads `state_attr('sensor.pool_poolbrain_cop_stimato','air_temp')`
+#       — the air the integration actually used. With the PdC bypassed that is
+#       the outdoor probe, and the PdC's own ambient reading is what the owner
+#       asked to stop believing.
+#
+# The tile added:
+tile_pdc_bypassed:
+  type: tile
+  entity: switch.pool_poolbrain_pdc_bypassed
+  name: PdC bypassata (svuotata)
+  icon: mdi:pipe-disconnected
+  color: blue
+  grid_options: {columns: 6, rows: 1}
+#
+# INVERSE (to undo, against a fresh config_hash):
+#   remove /views/0/sections/1/cards/7
+#   in /views/0/sections/1/cards/1/content:
+#     drop "{{ ' · 🚰 PdC BYPASSATA (svuotata)' if is_state('switch.pool_poolbrain_pdc_bypassed','on') else '' }}"
+#     put back "(aria {{ states('sensor.pool_pdc_temp_ambiente') }} °C)"

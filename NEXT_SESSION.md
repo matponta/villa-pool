@@ -45,7 +45,28 @@ discovering it during a reinstall.
 
 ---
 
-## v0.10.0 — the PdC bypassed for the winter (§5.2, owner amendment 2026-11-03)
+## v0.10.0 — the PdC bypassed for the winter (§5.2, owner amendment 2026-11-03) — DEPLOYED 2026-11-03 13:49
+
+### Live-verify result (2026-11-03)
+
+- Installed via HACS (release v0.10.0; the first download returned a GitHub
+  500 on the just-created release, the retry went through), HA restarted at
+  13:49. No `villa_pool` errors; CI green first time.
+- `switch.pool_poolbrain_pdc_bypassed` (live id) turned **ON at ~14:10** — the
+  owner had already drained the PdC. First tick after:
+  `pump OFF (no demand); PdC blocked: bypassed (drained); chlorine OFF — pump
+  not in marcia`, `blocked_reason: bypassed (drained)`, `holding: []`,
+  `latched: []`. `sensor.pool_poolbrain_cop_stimato` = 2.44 with
+  `air_source: outdoor`, `air_temp: 14.2`.
+- The pump/chlorine OFF is NOT the bypass: `switch.clorinatore` went off at
+  14:00:10, the end of the winter slot (12:00 + `winter_hours` 2.0), ten
+  minutes before the switch. Mode `winter`.
+- **Observed in passing, not addressed**: the winter slot ended with the cell
+  at 1.78 h against `winter_chlorine_hours` 2.0. The slot is exactly as long
+  as the target, so the 60 s confirmation, the cell's own start lag and
+  today's 13:49 restart all come out of the chlorine.
+- `pool-overview-v2` updated: see `dashboard_pdc_bypassed_cards.yaml`.
+
 
 ### Why
 
