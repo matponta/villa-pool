@@ -45,6 +45,47 @@ discovering it during a reinstall.
 
 ---
 
+## v0.10.0 — the PdC bypassed for the winter (§5.2, owner amendment 2026-11-03)
+
+### Why
+
+Owner, 2026-11-03: "In inverno bypasso il tubo della PDC pool e la svuoto
+dall'acqua, quindi ignora le sue temperature e mettila in blocco attraverso uno
+switch di manutenzione". At the time the mode was already `winter`, so the PdC
+was blocked by mode — but only by mode: a switch back to `auto` on a mild day
+would have let a drained machine be asked to heat, and its readings (water
+inlet 10.5 °C of stagnant pipe, `acceso`, `guasto`, ambient) were still being
+read as if it were in the circuit.
+
+### What changed
+
+- `switch.pool_pdc_bypassed` (live: `switch.pool_poolbrain_pdc_bypassed`),
+  default OFF, restoring, no auto-off.
+- ON: `pdc_step` answers BLOCKED (`bypassed (drained)`) in every non-frozen
+  mode, before the polling-gap freeze; `off` is written only if the machine
+  disagrees and is reachable. `_pdc_would_start` never asks the pump for flow.
+- The engine hands the law `pdc_running=None`, `pdc_fault=False` and the
+  outdoor probe as `air_temp`; `_restore` never adopts the drained machine.
+- The actuator's "never stop the pump under a running PdC" guard stands down.
+
+### Pre-tag adversarial review
+
+- **Frozen modes** (`manual`/`closed`/`maintenance`) return before `pdc_step`,
+  so the bypass changes nothing there: still hands-off, `pdc_write=False`.
+  Intended — the bypass is a block, not a reason to start writing in a mode
+  the owner froze.
+- **A state change during a polling gap**: with the PdC unavailable the bypass
+  still moves Memory to BLOCKED. That is not the failure §5.2 forbids (reading
+  a gap as evidence about the machine) — the evidence is the owner's switch —
+  and no write is made (`pdc_write = pdc_available`). Pinned.
+- **Turning it OFF** drops BLOCKED -> OFF next tick under the normal MIN_OFF
+  from the last real stop; a restart with it ON restores OFF and blocks on the
+  first tick without stamping a stop. No spurious start either way.
+- **The guard mutation**: `test_a_bypassed_pdc_does_not_hold_the_pump` was run
+  against the v0.9.0 actuator and FAILS there, passes here.
+- **Antifreeze** is untouched: it never needed the PdC.
+- Found nothing else.
+
 ## v0.9.0 — the cover ramp (§5.3, owner amendment 2026-09-29) — DEPLOYED 2026-09-29 14:31
 
 ### Live-verify result (2026-09-29, first tick 14:32:55)

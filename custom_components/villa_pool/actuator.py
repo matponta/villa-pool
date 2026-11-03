@@ -191,8 +191,13 @@ class Actuator:
         # pump window closes; from v0.3.0 the law stops it first, and this
         # still covers the minutes of cloud lag before it actually winds down.
         # Holding the pump on costs filtration hours. Getting it wrong costs a
-        # compressor.
-        if pump_desired == OFF and self._state(CONF_PDC_RUNNING) == ON:
+        # compressor. A bypassed PdC has no water through it to protect, and a
+        # stale `acceso` on a drained machine would hold the pump on all winter.
+        if (
+            pump_desired == OFF
+            and not self.entry.runtime_data.settings.get("pdc_bypassed")
+            and self._state(CONF_PDC_RUNNING) == ON
+        ):
             self._defer("pump", "the PdC still reads running — keeping flow")
             pump_desired = None
         else:

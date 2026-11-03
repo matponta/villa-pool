@@ -71,6 +71,14 @@ FLAGS: tuple[Flag, ...] = (
         "no probe, §5.3 is exactly the v0.6.0 hours law. Default OFF: this "
         "ships inert and is turned on once the probe has earned it.",
     ),
+    Flag(
+        "pdc_bypassed", "PdC bypassed", False, "mdi:pipe-disconnected",
+        "ON: the PdC is bypassed on the plumbing and drained for the winter "
+        "(owner, 2026-11-03). It is blocked in every mode and its own "
+        "readings are ignored — running flag, fault, ambient temperature (the "
+        "outdoor probe stands in for the COP). No auto-off: turn it OFF only "
+        "once the PdC is back in the circuit and full of water.",
+    ),
 )
 
 

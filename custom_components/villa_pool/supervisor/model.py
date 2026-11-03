@@ -130,6 +130,13 @@ class PoolState:
     # False while the cloud-polled climate entity is unavailable/unknown. The
     # law then makes NO state change and issues NO write (STORY §5.2 / §7.9).
     pdc_available: bool = True
+    # `switch.pool_pdc_bypassed` (owner, 2026-11-03): in winter the PdC is
+    # bypassed on the plumbing and DRAINED. Its own readings describe an empty
+    # machine, not the pool, so the engine already hands the law
+    # `pdc_running=None`, `pdc_fault=False` and the outdoor probe as
+    # `air_temp`; the law blocks it in every mode. Restoring, no auto-off: it
+    # lasts the winter, unlike maintenance.
+    pdc_bypassed: bool = False
 
     # --- chlorinator ----------------------------------------------------------
     chlorine_running: bool | None = None

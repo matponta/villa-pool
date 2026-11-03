@@ -507,6 +507,65 @@ async def test_the_pump_stops_once_the_pdc_has_wound_down(
     assert DEFAULT_PUMP_SWITCH in entities_of(writes(calls, "switch", "turn_off"))
 
 
+async def test_a_bypassed_pdc_does_not_hold_the_pump(hass: HomeAssistant) -> None:
+    """Drained for the winter, `pool_pdc_acceso` describes an empty machine.
+
+    The guard above protects a compressor with water through it; a bypassed
+    PdC has none, and a stale `acceso` would otherwise hold the pump on all
+    winter with nothing to show for it but `holding: [pump]`.
+    """
+    with freeze_time("2026-09-16 21:30:00+02:00") as frozen:
+        await setup_pool(hass, **{
+            "sensor.salt_chlorinator_runtime_today": "8",
+            DEFAULT_PUMP_SWITCH: "on",
+            "binary_sensor.pool_pdc_acceso": "on",          # stale, drained
+        })
+        await hass.services.async_call(
+            "switch", "turn_on", {"entity_id": "switch.pool_pdc_bypassed"},
+            blocking=True,
+        )
+        calls = record_calls(hass)
+        await go_live(hass)
+        await tick(hass, times=3, freezer=frozen)
+    assert DEFAULT_PUMP_SWITCH in entities_of(writes(calls, "switch", "turn_off"))
+    attrs = hass.states.get("sensor.pool_supervisor_reason").attributes
+    assert attrs["holding"] == []
+
+
+async def test_a_bypassed_pdc_is_blocked_and_its_readings_ignored(
+    hass: HomeAssistant,
+) -> None:
+    """Grid window, water far below the minimum: everything says heat. The
+    switch says the machine is empty — blocked, no `heat`, no fault reason,
+    and the COP model reads the outdoor probe instead of the PdC's own."""
+    with freeze_time("2026-09-16 23:30:00+02:00") as frozen:
+        await setup_pool(hass, **{
+            DEFAULT_WATER_TEMP: "12.0",
+            DEFAULT_TARIFF_BAND: "F3",
+            "binary_sensor.pool_pdc_guasto": "on",
+            "sensor.pool_pdc_temp_ambiente": "4.0",
+            "sensor.gw3000a_outdoor_temperature": "9.0",
+        })
+        await hass.services.async_call(
+            "switch", "turn_on", {"entity_id": "switch.pool_pdc_bypassed"},
+            blocking=True,
+        )
+        calls = record_calls(hass)
+        await go_live(hass)
+        await tick(hass, times=3, freezer=frozen)
+    reason = hass.states.get("sensor.pool_supervisor_reason")
+    assert reason.attributes["would_pdc_state"] == PDC_BLOCKED
+    assert reason.attributes["blocked_reason"] == "bypassed (drained)"
+    assert "fault" not in reason.state
+    assert not [
+        c for c in writes(calls, "climate", "set_hvac_mode")
+        if c["service_data"].get("hvac_mode") == "heat"
+    ]
+    cop = hass.states.get("sensor.pool_cop_stimato").attributes
+    assert cop["air_temp"] == 9.0
+    assert cop["air_source"] == "outdoor"
+
+
 async def test_the_speed_is_not_dropped_while_the_cell_is_still_enabled(
     hass: HomeAssistant, caplog
 ) -> None:
@@ -1352,6 +1411,7 @@ async def test_story_section_4_entity_ids(hass: HomeAssistant) -> None:
         "switch.pool_dry_run",
         "switch.pool_grid_day_topup",
         "switch.pool_orp_control",
+        "switch.pool_pdc_bypassed",
         # sensors
         "sensor.pool_supervisor_reason",
         "sensor.pool_pdc_state",

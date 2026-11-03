@@ -264,6 +264,62 @@ class TestPdcMachine:
         assert dec.pdc_state == PDC_OFF
 
 
+# --- the PdC bypassed and drained for the winter (owner, 2026-11-03) ----------
+
+class TestPdcBypassed:
+    """`switch.pool_pdc_bypassed`: the PdC is out of the circuit and empty."""
+
+    def test_blocks_in_auto_even_when_everything_says_heat(self):
+        now = at(2026, 9, 16, 23, 0)
+        st = state(now, water_temp=20.0, band=BAND_F3, pdc_bypassed=True)
+        dec, mem = decide(st, memory(now))
+        assert dec.pdc_state == PDC_BLOCKED
+        assert dec.blocked_reason == "bypassed (drained)"
+        assert "PdC blocked: bypassed" in dec.reason
+        assert mem.pdc_state == PDC_BLOCKED
+
+    def test_never_asks_for_the_pump_on_its_behalf(self):
+        """`_pdc_would_start` is the PdC's side of the start sequence; a
+        drained machine must not run the pump at night waiting for it."""
+        now = at(2026, 9, 16, 23, 0)
+        st = state(now, water_temp=20.0, band=BAND_F3, pump_running=False,
+                   pdc_bypassed=True)
+        dec, _ = decide(st, Memory())
+        assert "pdc" not in dec.requesters
+
+    def test_stops_a_running_machine_and_stamps_min_off(self):
+        now = at(2026, 9, 16, 23, 0)
+        st = state(now, water_temp=20.0, band=BAND_F3, pdc_bypassed=True)
+        mem = replace(memory(now), pdc_state=PDC_GRID,
+                      pdc_since=now - timedelta(hours=1))
+        dec, mem2 = decide(st, mem)
+        assert dec.pdc_state == PDC_BLOCKED
+        assert dec.pdc_write is True
+        assert mem2.pdc_last_stop == now
+
+    def test_polling_gap_still_blocks_but_writes_nothing(self):
+        now = at(2026, 9, 16, 23, 0)
+        st = state(now, water_temp=20.0, band=BAND_F3, pdc_bypassed=True,
+                   pdc_available=False)
+        dec, _ = decide(st, memory(now))
+        assert dec.pdc_state == PDC_BLOCKED
+        assert dec.pdc_write is False
+
+    def test_winter_mode_names_the_bypass_not_the_mode(self):
+        """The mode blocks it too; the line names the physical reason, which is
+        the one that must be undone before the PdC can run again."""
+        now = at(2026, 11, 3, 13, 0)
+        st = state(now, mode=MODE_WINTER, water_temp=12.0, pdc_bypassed=True)
+        dec, _ = decide(st, memory(now))
+        assert dec.blocked_reason == "bypassed (drained)"
+
+    def test_off_by_default_changes_nothing(self):
+        now = at(2026, 9, 16, 23, 0)
+        st = state(now, water_temp=25.0, band=BAND_F3)
+        dec, _ = decide(st, memory(now))
+        assert dec.pdc_state == PDC_GRID
+
+
 # --- modes --------------------------------------------------------------------
 
 class TestModes:

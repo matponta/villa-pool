@@ -211,7 +211,10 @@ class CopSensor(PoolSensorBase):
         return {
             "air_temp": state.air_temp if state else None,
             "air_source": (
-                "pdc_ambient" if data.get("pdc_air_temp") is not None else "outdoor"
+                "pdc_ambient"
+                if data.get("pdc_air_temp") is not None
+                and not (state and state.pdc_bypassed)
+                else "outdoor"
             ),
             "confidence": "low — 1 measured point (2.82 @ ~18 °C), modelled slope",
             "unit_of_measurement": None,
