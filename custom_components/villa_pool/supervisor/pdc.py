@@ -182,6 +182,18 @@ def pdc_step(
     now = state.mono
     current = mem.pdc_state
 
+    # --- bypassed and drained: blocked, whatever else is true ----------------
+    # Ahead of the polling gap because the answer does not depend on anything
+    # the machine says: it has no water in it. The `off` command is still
+    # gated on availability — a write into a polling gap is never right — and
+    # the actuator is idempotent, so against a machine already off this is
+    # silence.
+    if state.pdc_bypassed:
+        return (
+            PDC_BLOCKED, None, "PdC blocked: bypassed (drained)",
+            state.pdc_available, _block(mem, now, current),
+        )
+
     # --- the cloud-polling gap: freeze everything ----------------------------
     # Not a state change, not a write, not an observation. The machine keeps
     # whatever state it had and we look again next tick.
@@ -199,17 +211,7 @@ def pdc_step(
         state, pump_confirmed=pump_confirmed, pdc_blocked_modes=pdc_blocked_modes
     )
     if blocked is not None:
-        mem2 = mem
-        if current != PDC_BLOCKED:
-            # Leaving a running state: stamp the stop so MIN_OFF applies to the
-            # next start, and remember when we entered BLOCKED.
-            mem2 = replace(
-                mem,
-                pdc_state=PDC_BLOCKED,
-                pdc_since=now,
-                pdc_last_stop=now if current in RUNNING_STATES else mem.pdc_last_stop,
-            )
-        return PDC_BLOCKED, None, f"PdC blocked: {blocked}", True, mem2
+        return PDC_BLOCKED, None, f"PdC blocked: {blocked}", True, _block(mem, now, current)
 
     # A block that has cleared drops to OFF and is then free to start again in
     # this same tick — MIN_OFF is what protects the compressor, not inertia.
@@ -289,6 +291,19 @@ def _setpoint_for(pdc_state: str, cfg) -> float | None:
     if pdc_state == PDC_GRID:
         return cfg.min_temp
     return None
+
+
+def _block(mem, now, current):
+    if current == PDC_BLOCKED:
+        return mem
+    # Leaving a running state: stamp the stop so MIN_OFF applies to the next
+    # start, and remember when we entered BLOCKED.
+    return replace(
+        mem,
+        pdc_state=PDC_BLOCKED,
+        pdc_since=now,
+        pdc_last_stop=now if current in RUNNING_STATES else mem.pdc_last_stop,
+    )
 
 
 def _enter(mem, now, new_state, reason, cfg):

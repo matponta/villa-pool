@@ -167,7 +167,9 @@ may extend the pump). Windows may cross midnight.
 manual | closed` · `switch.pool_grid_heating` (default ON) ·
 `switch.pool_maintenance` (freezes all actuation, auto-off after 4 h with a
 notification) · `switch.pool_chlorine_target_control` (escape hatch: off =
-chlorine follows the window only).
+chlorine follows the window only) · `switch.pool_pdc_bypassed` *(added
+2026-11-03, §5.2: the PdC is bypassed and drained for the winter; default OFF,
+no auto-off)*.
 
 **Sensors (truth & KPIs)**: `sensor.pool_cop_stimato`,
 `sensor.pool_costo_termico_stimato`, `sensor.pool_last_session_*` (§5.4) ·
@@ -219,6 +221,24 @@ the rest.
 - Treat PdC `unavailable`/`unknown` as "no new information" (cloud polling gap),
   never as a state change. Judge nothing about the PdC for 10–15 min after a
   command (T02 lagged ~1 h once during the 16/9 bypass test).
+
+**AMENDMENT 2026-11-03 (owner), shipped in v0.10.0 — the PdC bypassed for the
+winter.** "In inverno bypasso il tubo della PdC e la svuoto dall'acqua: ignora
+le sue temperature e mettila in blocco." `switch.pool_pdc_bypassed` (default
+OFF, restoring, no auto-off) declares the machine out of the circuit and empty:
+
+- `* → BLOCKED` in **every** mode, `auto` included, with the reason `bypassed
+  (drained)` — named ahead of `mode winter`, because it is the block that has
+  to be undone by hand before the PdC may run again.
+- Its own readings describe an empty machine and are ignored: `pool_pdc_acceso`
+  (no restart adoption, and the actuator's "never stop the pump under a
+  running PdC" guard stands down — there is no water through it to protect),
+  `pool_pdc_guasto`, and `pool_pdc_temp_ambiente` (the outdoor probe stands in
+  for the COP estimate). The water temperature was never the PdC's.
+- `off` is still written if the machine disagrees and is reachable; never into
+  a polling gap. The PdC never asks the pump for flow.
+- Turned on by the owner on 2026-11-03, the day it shipped: the PdC was already
+  drained.
 
 ### 5.3 Chlorinator — enable to target
 

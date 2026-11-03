@@ -299,7 +299,7 @@ def _pdc_would_start(state: PoolState, mem: Memory, pump_confirmed: bool) -> boo
     BEFORE the PdC can be allowed to run, or the hydraulic interlock and the
     pump's own demand-following would deadlock each other.
     """
-    if pump_confirmed or not state.pdc_available:
+    if pump_confirmed or not state.pdc_available or state.pdc_bypassed:
         return False
     if state.maintenance or state.mode in (*PDC_BLOCKED_MODES, MODE_FILTRATION_ONLY):
         return False

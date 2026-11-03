@@ -237,7 +237,10 @@ class SupervisorEngine:
     def _build_state(self, now: datetime, utc_now: datetime) -> PoolState:
         data = self.coordinator.data or {}
         v = self._entity_value
-        air = data.get("pdc_air_temp")
+        # Drained for the winter: everything the machine reports describes an
+        # empty PdC, so none of it reaches the law (see `PoolState.pdc_bypassed`).
+        bypassed = self._pdc_bypassed()
+        air = None if bypassed else data.get("pdc_air_temp")
         return PoolState(
             now=now,
             utc_now=utc_now,
@@ -252,9 +255,10 @@ class SupervisorEngine:
             pump_running=data.get("pump_running"),
             pump_problem=bool(data.get("pump_problem")),
             pump_flow_warning=bool(data.get("pump_flow_warning")),
-            pdc_running=data.get("pdc_running"),
-            pdc_fault=bool(data.get("pdc_fault")),
+            pdc_running=None if bypassed else data.get("pdc_running"),
+            pdc_fault=False if bypassed else bool(data.get("pdc_fault")),
             pdc_available=bool(data.get("pdc_available", True)),
+            pdc_bypassed=bypassed,
             chlorine_running=data.get("chlorine_running"),
             chlorine_hours_today=float(data.get("chlorine_hours_today") or 0.0),
             cover_closed=self.cover.closed(utc_now),
@@ -271,6 +275,9 @@ class SupervisorEngine:
             water_orp=data.get("water_orp"),
             water_ec=data.get("water_ec"),
         )
+
+    def _pdc_bypassed(self) -> bool:
+        return bool(self._entity_value("pdc_bypassed", False))
 
     def _cover_closed_days(self, now: datetime, utc_now: datetime) -> int | None:
         """Calendar days since the cover was last seen open, while it is shut.
@@ -450,7 +457,9 @@ class SupervisorEngine:
         data = self.coordinator.data or {}
         return restore_memory(
             mono=state.mono,
-            pdc_running=data.get("pdc_running"),
+            # `state.pdc_running` is None while the PdC is bypassed, and a
+            # drained machine is never adopted as running.
+            pdc_running=False if state.pdc_bypassed else data.get("pdc_running"),
             pump_running=data.get("pump_running"),
             water_temp=state.water_temp,
             min_temp=state.config.min_temp,

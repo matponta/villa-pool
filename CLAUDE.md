@@ -24,7 +24,7 @@ skeleton and conventions and shares nothing at runtime.**
 Target: Home Assistant **2026.8.3** (Python ≥ 3.14). Single instance,
 config-flow hub.
 
-## Status: v0.9.0 in the repo (v0.8.0 deployed); actuating since 2026-09-17 20:04.
+## Status: v0.10.0 in the repo; actuating since 2026-09-17 20:04.
 
 **The integration is live on the owner's HA and `switch.pool_dry_run` is OFF.**
 Anything in this repo that reads as "not yet deployed" is stale — `NEXT_SESSION.md`
@@ -297,6 +297,30 @@ Image detection from `camera.g6_bbq_high_resolution_channel` was explored on
 2026-09-21/22 and **dropped** in favour of the physical sensor alone (owner,
 2026-09-22) — see STORY §3.
 
+### The PdC bypassed for the winter (§5.2, owner amendment 2026-11-03, v0.10.0)
+
+In winter the owner bypasses the PdC on the plumbing and **drains it**.
+`switch.pool_pdc_bypassed` (default OFF, restoring, **no auto-off** — it lasts
+the winter, unlike maintenance) says so, and it is ON since 2026-11-03.
+
+- **Blocked in every mode**, `auto` included: `pdc_step` answers BLOCKED before
+  anything else, even before the polling-gap freeze, because the answer does
+  not depend on what the machine says. The reason is `bypassed (drained)`, and
+  it is named ahead of `mode winter` — it is the block a human has to undo.
+- **Its readings are ignored at the engine**, not in the law: `pdc_running`
+  goes to the law as `None`, `pdc_fault` as False, and `air_temp` falls back to
+  the outdoor probe (`sensor.pool_cop_stimato` says `air_source: outdoor`).
+  `_restore` never adopts a drained machine as running.
+- **The pump-stop guard stands down.** "Never stop the pump while `acceso`
+  reads on" protects a compressor with water through it; a drained one has
+  none, and a stale `acceso` would hold the pump on all winter.
+- `off` is still written when the machine disagrees and is reachable — the
+  block is a block, not hands-off — and never into a polling gap.
+- Water temperature was never the PdC's (`sensor.gw3000a_soil_temperature_1`),
+  so nothing about the guaranteed minimum changes.
+
+**Turn it OFF only once the PdC is back in the circuit and full of water.**
+
 ### The heating-session log (§5.4)
 
 `supervisor/session.py` brackets each heating run and records what it cost, so
@@ -423,7 +447,7 @@ dashboards and automations reference those ids. Under `has_entity_name` the id
 prefix comes from the **device name**, so the device is called `Pool` (not
 `Villa Pool`) and each entity's `name` is chosen to slugify onto the §4 id —
 hence terse labels like "Solar on w" and "Min temp". Renaming the device would
-silently rename all 36 entities. Pinned by
+silently rename every entity. Pinned by
 `tests/test_engine.py::test_story_section_4_entity_ids`.
 
 ### Two clocks, and why
